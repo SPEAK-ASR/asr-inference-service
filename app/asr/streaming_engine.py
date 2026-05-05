@@ -144,6 +144,33 @@ class StreamingEngine:
         decode_seconds = time.perf_counter() - t0
         return (text or "").strip(), decode_seconds
 
+    async def transcribe_audio_array(
+        self,
+        audio: np.ndarray,
+        *,
+        language_hint: str | None,
+    ) -> tuple[str, float]:
+        """Decode a standalone float32 mono segment (e.g. VAD output)."""
+        if audio.size == 0:
+            return "", 0.0
+
+        audio_arr = np.ascontiguousarray(audio, dtype=np.float32)
+        generate_kwargs: dict[str, Any] = {"task": self.settings.task}
+        if language_hint:
+            generate_kwargs["language"] = language_hint
+
+        loop = asyncio.get_running_loop()
+        t0 = time.perf_counter()
+        async with self._lock:
+            text = await loop.run_in_executor(
+                None,
+                self._run_pipeline_sync,
+                audio_arr,
+                generate_kwargs,
+            )
+        decode_seconds = time.perf_counter() - t0
+        return (text or "").strip(), decode_seconds
+
     def _run_pipeline_sync(
         self,
         audio: np.ndarray,

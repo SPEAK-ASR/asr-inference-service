@@ -17,6 +17,9 @@ peft>=0.13
 faster-whisper>=1.0,<2
 numpy>=1.26,<3
 
+# --- VAD (realtime segmentation; matches HF Space pattern) ---
+silero-vad>=6,<7
+
 # --- Audio I/O ---
 soundfile>=0.12
 

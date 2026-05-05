@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     language_hint: str = Field(default="si", description="Whisper language hint, e.g. 'si' for Sinhala.")
     task: Literal["transcribe", "translate"] = "transcribe"
 
+    merge_peft_adapter: bool = Field(
+        default=True,
+        description=(
+            "transformers + PEFT adapter path only: merge LoRA into base weights "
+            "before inference (same as the reference Gradio Space)."
+        ),
+    )
+
     # --- faster-whisper (CTranslate2) only; ignored when backend=transformers ---
     faster_whisper_cuda_compute_type: str = Field(
         default="float16",
@@ -75,17 +83,34 @@ class Settings(BaseSettings):
     target_sample_rate: int = 16_000
     """Internal sample rate the engine operates on. Inputs are validated/converted to this."""
 
+    streaming_mode: Literal["vad", "sliding_window"] = Field(
+        default="vad",
+        description=(
+            "vad = Silero VAD + silence-triggered segments (HF Space style); "
+            "sliding_window = periodic partial decode over a trailing window."
+        ),
+    )
+
     partial_interval_ms: int = 500
-    """How often the gateway flushes a partial decode while audio is flowing."""
+    """How often the gateway flushes a partial decode (sliding_window mode only)."""
 
     max_buffer_seconds: float = 30.0
-    """Hard cap on the per-session sliding audio buffer length."""
+    """Hard cap on buffered audio (VAD segment cap; sliding window trim)."""
+
+    silence_trigger_seconds: float = 1.0
+    """VAD mode: seconds of silence after speech before a segment is finalized."""
+
+    vad_threshold: float = 0.5
+    """Silero VAD confidence threshold (0–1, higher = stricter)."""
+
+    min_speech_seconds: float = 0.5
+    """VAD mode: ignore segments shorter than this (noise blips)."""
 
     decode_window_seconds: float = 6.0
     """Length of the trailing audio window fed to Whisper per partial decode."""
 
     min_audio_for_partial_seconds: float = 0.6
-    """Don't run inference until at least this much audio is buffered."""
+    """sliding_window mode: minimum buffered seconds before running a partial decode."""
 
     # --- Session lifecycle ---
     idle_timeout_seconds: int = 60

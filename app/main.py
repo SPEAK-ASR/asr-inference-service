@@ -45,6 +45,12 @@ async def lifespan(app: FastAPI):
 
     asr = load_asr(settings)
     engine = StreamingEngine(asr=asr, settings=settings)
+
+    from app.asr.vad import preload_vad
+
+    if settings.streaming_mode == "vad":
+        preload_vad()
+
     sessions = SessionManager(settings=settings)
     await sessions.start()
 

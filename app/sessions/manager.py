@@ -19,6 +19,7 @@ from typing import Awaitable, Callable
 
 from app.asr.decoder import IncrementalDecoder
 from app.asr.streaming_engine import EngineBuffer
+from app.asr.vad import VadSegmenterState, reset_segment
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 
@@ -38,6 +39,7 @@ class SessionState:
     utterance_id: str = field(default_factory=lambda: f"u{uuid.uuid4().hex[:8]}")
     engine_buffer: EngineBuffer = field(init=False)
     decoder: IncrementalDecoder = field(default_factory=IncrementalDecoder)
+    vad_segmenter: VadSegmenterState = field(default_factory=VadSegmenterState)
 
     last_audio_seq: int = -1
     chunks_received: int = 0
@@ -58,6 +60,7 @@ class SessionState:
     def new_utterance(self) -> str:
         self.utterance_id = f"u{uuid.uuid4().hex[:8]}"
         self.engine_buffer.reset_for_new_utterance()
+        reset_segment(self.vad_segmenter)
         self.decoder = IncrementalDecoder(
             min_partial_char_delta=self.decoder.min_partial_char_delta,
         )

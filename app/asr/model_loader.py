@@ -156,6 +156,9 @@ def _load_transformers_pipeline(settings: Settings) -> Any:
             torch_dtype=torch_dtype,
         )
         model = PeftModel.from_pretrained(base_model, settings.model_id)
+        if settings.merge_peft_adapter:
+            log.info("asr_peft_merging", extra={"note": "merge_and_unload for inference"})
+            model = model.merge_and_unload()
 
         pipe = pipeline(
             task="automatic-speech-recognition",
