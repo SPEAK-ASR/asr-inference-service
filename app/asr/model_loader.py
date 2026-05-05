@@ -112,7 +112,7 @@ def load_asr(settings: Settings | None = None) -> LoadedASR:
             tokenizer=processor.tokenizer,
             feature_extractor=processor.feature_extractor,
             device=device,
-            dtype=torch_dtype,
+            torch_dtype=torch_dtype,
             chunk_length_s=30,
             return_timestamps=False,
         )
@@ -121,7 +121,7 @@ def load_asr(settings: Settings | None = None) -> LoadedASR:
             task="automatic-speech-recognition",
             model=settings.model_id,
             device=device,
-            dtype=torch_dtype,
+            torch_dtype=torch_dtype,
             chunk_length_s=30,
             return_timestamps=False,
         )
