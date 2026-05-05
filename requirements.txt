@@ -1,0 +1,23 @@
+# --- Web framework ---
+fastapi>=0.115,<0.118
+uvicorn[standard]>=0.30,<0.33
+
+# --- Validation / config ---
+pydantic>=2.7,<3
+pydantic-settings>=2.3,<3
+python-dotenv>=1.0,<2
+
+# --- ML stack (CPU/GPU compatible; CUDA wheel chosen by env if available) ---
+# NOTE: For CUDA, install torch from the appropriate index URL:
+#   pip install --index-url https://download.pytorch.org/whl/cu121 torch
+torch>=2.2
+transformers>=4.44,<5
+accelerate>=0.33
+peft>=0.13
+numpy>=1.26,<3
+
+# --- Audio I/O ---
+soundfile>=0.12
+
+# --- Misc ---
+typing-extensions>=4.10

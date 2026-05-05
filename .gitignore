@@ -1,0 +1,48 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Hugging Face cache (optional, large)
+.hf_cache/
+huggingface/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local uploads / scratch
+scratch/
+*.wav
+*.mp3
+*.flac
+!tests/manual/*.wav

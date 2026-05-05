@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Realtime ASR — Sinhala Test Client</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --bg-elev: #161922;
+    --bg-elev-2: #1d2230;
+    --text: #e7eaf0;
+    --muted: #97a0b3;
+    --accent: #5b8cff;
+    --accent-strong: #4071ff;
+    --good: #3ddc84;
+    --warn: #ffb547;
+    --bad: #ff5d6c;
+    --border: #232838;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Sinhala", sans-serif;
+    background: radial-gradient(1200px 800px at 20% -10%, #1b2236 0%, var(--bg) 60%) fixed;
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px;
+    background: rgba(15, 17, 21, 0.6);
+    backdrop-filter: blur(10px);
+    position: sticky; top: 0; z-index: 5;
+  }
+  header h1 {
+    font-size: 16px; font-weight: 600; margin: 0; letter-spacing: 0.2px;
+  }
+  header .pill {
+    font-size: 12px; padding: 4px 10px; border-radius: 999px;
+    background: var(--bg-elev-2); color: var(--muted);
+    border: 1px solid var(--border);
+  }
+  main {
+    max-width: 980px; margin: 0 auto; padding: 24px;
+    display: grid; gap: 18px;
+  }
+  .card {
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg-elev-2) 100%);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 20px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .row + .row { margin-top: 10px; }
+  label { font-size: 12px; color: var(--muted); }
+  input, select {
+    background: #0f131c; color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; font-size: 13px; min-width: 220px;
+  }
+  button {
+    background: var(--accent); color: white; border: 0;
+    padding: 9px 14px; border-radius: 8px; font-weight: 600;
+    cursor: pointer; transition: background .15s ease, transform .05s ease;
+  }
+  button.secondary { background: #2a3148; color: var(--text); }
+  button.danger { background: var(--bad); }
+  button:hover:not(:disabled) { background: var(--accent-strong); }
+  button.secondary:hover:not(:disabled) { background: #343c58; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .status {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--muted);
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #444; }
+  .dot.on { background: var(--good); box-shadow: 0 0 0 4px rgba(61,220,132,0.15); }
+  .dot.warn { background: var(--warn); }
+  .dot.err { background: var(--bad); }
+
+  #partial {
+    min-height: 56px;
+    font-size: 18px; line-height: 1.45;
+    padding: 14px 16px; border-radius: 10px;
+    background: #0f131c; border: 1px dashed var(--border);
+    color: #c9d3e8;
+    white-space: pre-wrap;
+  }
+  #partial .stable { color: var(--text); }
+  #partial .tail { color: var(--muted); }
+  #partial:empty::before {
+    content: "Awaiting partial transcript…"; color: #4a5168;
+  }
+  .awaiting-wrap {
+    margin-top: 10px;
+    display: none;
+    gap: 8px;
+    align-items: center;
+  }
+  .awaiting-wrap.visible {
+    display: flex;
+  }
+  .awaiting-label {
+    font-size: 12px;
+    color: var(--muted);
+    min-width: 92px;
+  }
+  .awaiting-bar {
+    flex: 1;
+    height: 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: #0f131c;
+    overflow: hidden;
+  }
+  .awaiting-bar > div {
+    width: 0%;
+    height: 100%;
+    transition: width 120ms linear;
+    background: linear-gradient(90deg, #5b8cff 0%, #8bb0ff 60%, #c4d6ff 100%);
+  }
+  .awaiting-pct {
+    font-size: 12px;
+    color: #c9d3e8;
+    min-width: 40px;
+    text-align: right;
+  }
+
+  #finals {
+    list-style: none; margin: 0; padding: 0;
+    max-height: 260px; overflow: auto;
+  }
+  #finals li {
+    padding: 10px 12px; border-radius: 8px;
+    background: #0f131c; border: 1px solid var(--border);
+    margin-bottom: 8px; font-size: 15px; line-height: 1.45;
+  }
+  #finals li .meta {
+    font-size: 11px; color: var(--muted); margin-bottom: 4px;
+  }
+
+  #log {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px; color: var(--muted);
+    background: #0c0f15; border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px;
+    max-height: 200px; overflow: auto;
+    white-space: pre-wrap;
+  }
+
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted); margin: 0 0 10px;
+  }
+
+  .meter {
+    width: 120px; height: 8px; border-radius: 4px;
+    background: #0f131c; overflow: hidden; border: 1px solid var(--border);
+  }
+  .meter > div {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, #3ddc84 0%, #ffb547 70%, #ff5d6c 100%);
+    transition: width 60ms linear;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Realtime ASR — Sinhala Test Client</h1>
+  <span class="pill" id="modelPill">model: loading…</span>
+  <span class="pill" id="devicePill">device: ?</span>
+  <div style="flex:1"></div>
+  <span class="status"><span class="dot" id="connDot"></span><span id="connText">Disconnected</span></span>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Connection</h2>
+    <div class="row">
+      <label>WebSocket URL</label>
+      <input id="wsUrl" />
+      <label>Session ID</label>
+      <input id="sessionId" />
+      <label>Lang hint</label>
+      <input id="langHint" value="si" style="min-width:60px" />
+    </div>
+    <div class="row">
+      <button id="startBtn">Start streaming</button>
+      <button id="endUttBtn" class="secondary" disabled>End utterance</button>
+      <button id="stopBtn" class="danger" disabled>Stop</button>
+      <span class="status" style="margin-left:auto">
+        <span>mic</span>
+        <div class="meter"><div id="meter"></div></div>
+      </span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Live partial</h2>
+    <div id="partial"></div>
+    <div class="awaiting-wrap" id="awaitingWrap">
+      <div class="awaiting-label">Transcribing</div>
+      <div class="awaiting-bar"><div id="awaitingBarFill"></div></div>
+      <div class="awaiting-pct" id="awaitingPct">0%</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Finals</h2>
+    <ol id="finals" reversed></ol>
+  </section>
+
+  <section class="card">
+    <h2>Log</h2>
+    <div id="log"></div>
+  </section>
+</main>
+
+<script>
+(() => {
+  // ---------- DOM ----------
+  const $ = (id) => document.getElementById(id);
+  const wsUrlInput = $("wsUrl");
+  const sessionIdInput = $("sessionId");
+  const langInput = $("langHint");
+  const startBtn = $("startBtn");
+  const endUttBtn = $("endUttBtn");
+  const stopBtn = $("stopBtn");
+  const connDot = $("connDot");
+  const connText = $("connText");
+  const modelPill = $("modelPill");
+  const devicePill = $("devicePill");
+  const partialEl = $("partial");
+  const awaitingWrap = $("awaitingWrap");
+  const awaitingBarFill = $("awaitingBarFill");
+  const awaitingPct = $("awaitingPct");
+  const finalsEl = $("finals");
+  const logEl = $("log");
+  const meterEl = $("meter");
+
+  const TARGET_SR = 16000;
+  const CHUNK_MS = 320;
+
+  const defaultWs = (location.protocol === "https:" ? "wss://" : "ws://")
+    + location.host + "/ws/transcribe";
+  wsUrlInput.value = defaultWs;
+  sessionIdInput.value = "s" + Math.random().toString(36).slice(2, 10);
+
+  // ---------- State ----------
+  let ws = null;
+  let audioCtx = null;
+  let micStream = null;
+  let sourceNode = null;
+  let processorNode = null;
+  let inputBuffer = [];      // queue of Float32Array at native SR
+  let nativeSr = 48000;
+  let seq = 0;
+  let stableText = "";
+  let lastPartial = "";
+  let progressTimer = null;
+  let progressPct = 0;
+
+  // ---------- Helpers ----------
+  function log(msg, kind="info") {
+    const ts = new Date().toISOString().slice(11, 23);
+    logEl.textContent += `[${ts}] ${kind.toUpperCase()} ${msg}\n`;
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  function setConn(state, text) {
+    connDot.className = "dot " + (state || "");
+    connText.textContent = text;
+  }
+  function btnState({streaming}) {
+    startBtn.disabled = streaming;
+    endUttBtn.disabled = !streaming;
+    stopBtn.disabled = !streaming;
+  }
+  function setProgress(pct) {
+    const safe = Math.max(0, Math.min(100, Math.round(pct)));
+    progressPct = safe;
+    awaitingBarFill.style.width = safe + "%";
+    awaitingPct.textContent = safe + "%";
+  }
+  function showAwaiting(show) {
+    awaitingWrap.classList.toggle("visible", !!show);
+  }
+  function startProgressLoop() {
+    stopProgressLoop();
+    showAwaiting(true);
+    setProgress(0);
+    progressTimer = setInterval(() => {
+      if (progressPct < 95) {
+        setProgress(progressPct + 3);
+      } else {
+        // keep motion while waiting for a transcript event
+        setProgress(8);
+      }
+    }, 120);
+  }
+  function stopProgressLoop(markDone) {
+    if (progressTimer) {
+      clearInterval(progressTimer);
+      progressTimer = null;
+    }
+    if (markDone) {
+      setProgress(100);
+      setTimeout(() => {
+        showAwaiting(false);
+        setProgress(0);
+      }, 220);
+      return;
+    }
+    showAwaiting(false);
+    setProgress(0);
+  }
+  btnState({streaming: false});
+  stopProgressLoop(false);
+
+  // Probe /health/ready to populate pills.
+  fetch("/health/ready").then(r => r.json()).then(j => {
+    if (j.model_id) modelPill.textContent = "model: " + j.model_id;
+    if (j.device) devicePill.textContent = "device: " + j.device;
+  }).catch(() => {});
+
+  // ---------- Audio capture ----------
+  async function startMic() {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    nativeSr = audioCtx.sampleRate;
+    sourceNode = audioCtx.createMediaStreamSource(micStream);
+
+    const bufferSize = 4096;
+    processorNode = audioCtx.createScriptProcessor(bufferSize, 1, 1);
+    processorNode.onaudioprocess = (e) => {
+      const input = e.inputBuffer.getChannelData(0);
+      // peak meter
+      let peak = 0;
+      for (let i = 0; i < input.length; i++) {
+        const v = Math.abs(input[i]);
+        if (v > peak) peak = v;
+      }
+      meterEl.style.width = Math.min(100, Math.round(peak * 140)) + "%";
+      // copy because the buffer is reused
+      inputBuffer.push(new Float32Array(input));
+    };
+    sourceNode.connect(processorNode);
+    processorNode.connect(audioCtx.destination);
+    log(`mic started, native sr=${nativeSr}Hz`);
+  }
+
+  function stopMic() {
+    try { processorNode && processorNode.disconnect(); } catch {}
+    try { sourceNode && sourceNode.disconnect(); } catch {}
+    try { audioCtx && audioCtx.close(); } catch {}
+    if (micStream) micStream.getTracks().forEach(t => t.stop());
+    processorNode = sourceNode = audioCtx = micStream = null;
+    inputBuffer = [];
+    meterEl.style.width = "0%";
+  }
+
+  function downsampleTo16k(float32Arr, fromSr) {
+    if (fromSr === TARGET_SR) return float32Arr;
+    const ratio = fromSr / TARGET_SR;
+    const outLen = Math.floor(float32Arr.length / ratio);
+    const out = new Float32Array(outLen);
+    let pos = 0, oPos = 0;
+    while (oPos < outLen) {
+      const nextPos = Math.floor((oPos + 1) * ratio);
+      let sum = 0, count = 0;
+      for (let i = pos; i < nextPos && i < float32Arr.length; i++) {
+        sum += float32Arr[i];
+        count++;
+      }
+      out[oPos++] = count ? sum / count : 0;
+      pos = nextPos;
+    }
+    return out;
+  }
+
+  function floatToPCM16(f32) {
+    const out = new Int16Array(f32.length);
+    for (let i = 0; i < f32.length; i++) {
+      let s = Math.max(-1, Math.min(1, f32[i]));
+      out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    return out;
+  }
+
+  function int16ToBase64(i16) {
+    const bytes = new Uint8Array(i16.buffer);
+    let bin = "";
+    const CH = 0x8000;
+    for (let i = 0; i < bytes.length; i += CH) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+    }
+    return btoa(bin);
+  }
+
+  // Drain `inputBuffer`, downsample, and ship CHUNK_MS slices.
+  let flushTimer = null;
+  function startFlushLoop() {
+    flushTimer = setInterval(() => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (inputBuffer.length === 0) return;
+
+      const total = inputBuffer.reduce((a, b) => a + b.length, 0);
+      const merged = new Float32Array(total);
+      let off = 0;
+      for (const a of inputBuffer) { merged.set(a, off); off += a.length; }
+      inputBuffer = [];
+
+      const sixteen = downsampleTo16k(merged, nativeSr);
+      const samplesPerChunk = Math.floor((CHUNK_MS / 1000) * TARGET_SR);
+      for (let i = 0; i < sixteen.length; i += samplesPerChunk) {
+        const slice = sixteen.subarray(i, Math.min(i + samplesPerChunk, sixteen.length));
+        if (slice.length < samplesPerChunk * 0.5) {
+          // hold the tail for the next tick
+          const tail = new Float32Array(slice);
+          inputBuffer.push(tail);
+          break;
+        }
+        const pcm = floatToPCM16(slice);
+        const b64 = int16ToBase64(pcm);
+        ws.send(JSON.stringify({
+          type: "audio_chunk",
+          seq: seq++,
+          audio_b64: b64,
+          duration_ms: Math.round((slice.length / TARGET_SR) * 1000),
+        }));
+      }
+    }, CHUNK_MS);
+  }
+  function stopFlushLoop() {
+    if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
+  }
+
+  // ---------- WebSocket ----------
+  function openSocket() {
+    return new Promise((resolve, reject) => {
+      ws = new WebSocket(wsUrlInput.value);
+      ws.onopen = () => {
+        setConn("on", "Connected");
+        log("ws open");
+        ws.send(JSON.stringify({
+          type: "start",
+          session_id: sessionIdInput.value,
+          sample_rate: TARGET_SR,
+          encoding: "pcm_s16le",
+          channels: 1,
+          language_hint: langInput.value || "si",
+        }));
+        resolve();
+      };
+      ws.onmessage = (ev) => handleServerMessage(ev.data);
+      ws.onerror = (ev) => { log("ws error", "err"); reject(new Error("ws error")); };
+      ws.onclose = (ev) => {
+        setConn("", "Disconnected");
+        log(`ws closed code=${ev.code} reason=${ev.reason || "-"}`);
+        cleanupAfterClose();
+      };
+    });
+  }
+
+  function cleanupAfterClose() {
+    stopFlushLoop();
+    stopMic();
+    btnState({streaming: false});
+    stopProgressLoop(false);
+  }
+
+  function handleServerMessage(raw) {
+    let msg;
+    try { msg = JSON.parse(raw); } catch { log("bad json from server", "err"); return; }
+    switch (msg.type) {
+      case "ack":
+        log(`ack: ${msg.message}`);
+        break;
+      case "partial_transcript":
+        stopProgressLoop(true);
+        renderPartial(msg);
+        break;
+      case "final_transcript":
+        stopProgressLoop(true);
+        renderFinal(msg);
+        break;
+      case "warning":
+        setConn("warn", "Warning: " + msg.code);
+        log(`WARNING ${msg.code}: ${msg.message}`, "warn");
+        break;
+      case "error":
+        setConn("err", "Error: " + msg.code);
+        log(`ERROR ${msg.code}: ${msg.message}`, "err");
+        break;
+      case "session_summary":
+        log(`session_summary utterances=${msg.utterances} duration_ms=${msg.duration_ms} reason=${msg.reason}`);
+        break;
+      default:
+        log("unknown msg type: " + msg.type, "warn");
+    }
+  }
+
+  function renderPartial(msg) {
+    lastPartial = msg.text || "";
+    if (msg.is_stable) stableText = lastPartial;
+    const tail = lastPartial.startsWith(stableText)
+      ? lastPartial.slice(stableText.length) : lastPartial;
+    partialEl.innerHTML =
+      `<span class="stable">${escapeHtml(stableText)}</span>` +
+      `<span class="tail">${escapeHtml(tail)}</span>`;
+  }
+
+  function renderFinal(msg) {
+    const li = document.createElement("li");
+    li.innerHTML = `<div class="meta">u=${msg.utterance_id} · ${msg.start_ms}-${msg.end_ms} ms</div>`
+                 + escapeHtml(msg.text || "");
+    finalsEl.prepend(li);
+    partialEl.textContent = "";
+    stableText = "";
+    lastPartial = "";
+  }
+
+  function escapeHtml(s) {
+    return (s || "").replace(/[&<>"']/g, c => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;",
+    })[c]);
+  }
+
+  // ---------- Buttons ----------
+  startBtn.addEventListener("click", async () => {
+    try {
+      seq = 0; stableText = ""; lastPartial = "";
+      partialEl.textContent = "";
+      btnState({streaming: true});
+      startProgressLoop();
+      await openSocket();
+      await startMic();
+      startFlushLoop();
+    } catch (e) {
+      log("start failed: " + (e && e.message || e), "err");
+      cleanupAfterClose();
+    }
+  });
+
+  endUttBtn.addEventListener("click", () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    startProgressLoop();
+    ws.send(JSON.stringify({ type: "end_utterance", seq: seq }));
+    log("sent end_utterance");
+  });
+
+  stopBtn.addEventListener("click", () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "stop" }));
+    }
+    setTimeout(() => { try { ws && ws.close(); } catch {} }, 250);
+  });
+
+  window.addEventListener("beforeunload", () => {
+    try { ws && ws.close(); } catch {}
+    stopMic();
+  });
+})();
+</script>
+</body>
+</html>
