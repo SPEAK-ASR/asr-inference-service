@@ -63,7 +63,7 @@ class EngineBuffer:
 
 
 class StreamingEngine:
-    """Wraps a `LoadedASR` and exposes async transcribe-window calls."""
+    """Wraps a `LoadedASR` (transformers or faster-whisper) and exposes async calls."""
 
     def __init__(self, asr: LoadedASR, settings: Settings | None = None) -> None:
         self.asr = asr
@@ -149,18 +149,9 @@ class StreamingEngine:
         audio: np.ndarray,
         generate_kwargs: dict[str, Any],
     ) -> str:
-        """Blocking call into the HF pipeline; runs in the default executor."""
-        try:
-            result = self.asr.pipe(
-                {"array": audio, "sampling_rate": self.sample_rate},
-                generate_kwargs=generate_kwargs,
-            )
-        except TypeError:
-            result = self.asr.pipe(
-                {"array": audio, "sampling_rate": self.sample_rate}
-            )
-        if isinstance(result, dict):
-            return result.get("text", "") or ""
-        if isinstance(result, list) and result and isinstance(result[0], dict):
-            return result[0].get("text", "") or ""
-        return str(result or "")
+        """Blocking inference; runs in the default executor."""
+        return self.asr.transcribe_sync(
+            audio,
+            self.sample_rate,
+            generate_kwargs,
+        )

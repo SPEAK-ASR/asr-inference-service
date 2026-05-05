@@ -3,9 +3,15 @@
 All tunables for the ASR backend live here. Values are loaded from environment
 variables (with `ASR_` prefix) and an optional `.env` file at the project root.
 
-Examples (PowerShell):
+Examples (PowerShell) — Hugging Face Transformers (incl. PEFT adapter):
+    $env:ASR_BACKEND = "transformers"
     $env:ASR_MODEL_ID = "SPEAK-ASR/whisper-si-exp-10-medium-all"
     $env:ASR_DEVICE   = "auto"  # auto | cuda | cpu
+
+Examples — faster-whisper (CTranslate2 checkpoint on Hugging Face):
+    $env:ASR_BACKEND = "faster_whisper"
+    $env:ASR_MODEL_ID = "irudachirath/faster-whisper-medium-si-exp10-fp16"
+    $env:ASR_FASTER_WHISPER_CUDA_COMPUTE_TYPE = "float16"
 """
 
 from __future__ import annotations
@@ -28,12 +34,26 @@ class Settings(BaseSettings):
     )
 
     # --- Model ---
+    backend: Literal["transformers", "faster_whisper"] = Field(
+        default="transformers",
+        description="transformers = HF AutoModel/pipeline (incl. PEFT adapters); faster_whisper = CTranslate2 (e.g. model.bin on HF).",
+    )
     model_id: str = Field(
         default="SPEAK-ASR/whisper-si-exp-10-medium-all",
-        description="Hugging Face model id for the primary ASR path.",
+        description="Model id or path: HF repo for transformers or faster-whisper CTranslate2 export.",
     )
     language_hint: str = Field(default="si", description="Whisper language hint, e.g. 'si' for Sinhala.")
     task: Literal["transcribe", "translate"] = "transcribe"
+
+    # --- faster-whisper (CTranslate2) only; ignored when backend=transformers ---
+    faster_whisper_cuda_compute_type: str = Field(
+        default="float16",
+        description="CTranslate2 compute_type on GPU (e.g. float16, int8_float16).",
+    )
+    faster_whisper_cpu_compute_type: str = Field(
+        default="int8",
+        description="CTranslate2 compute_type on CPU (e.g. int8, float32).",
+    )
 
     # --- Device / precision ---
     device: Literal["auto", "cuda", "cpu"] = "auto"

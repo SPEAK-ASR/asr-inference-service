@@ -1,20 +1,22 @@
 """Whisper model loader with auto CUDA/CPU device selection.
 
-The loader is intentionally thin: it instantiates a Hugging Face
-`AutomaticSpeechRecognition` pipeline so all the buffered-chunk plumbing in
-the streaming engine just needs `pipe(audio_array, ...)`.
+Supports two backends (see ``Settings.backend``):
 
-The pipeline is loaded once at app startup (`startup` event in `main.py`) and
-reused across all sessions; concurrent calls into a single Whisper pipeline
-are serialized inside the streaming engine via an asyncio lock to avoid
-clobbering CUDA state.
+- **transformers**: Hugging Face ``AutomaticSpeechRecognition`` pipeline
+  (full weights or PEFT adapter + base).
+- **faster_whisper**: CTranslate2 models (e.g. ``model.bin`` on Hugging Face),
+  loaded via ``faster_whisper.WhisperModel``.
+
+The active model is loaded once at app startup and reused; concurrent calls
+are serialized in the streaming engine via an asyncio lock.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
+import numpy as np
 import torch
 from transformers import (
     AutoConfig,
@@ -31,13 +33,30 @@ log = get_logger(__name__)
 
 @dataclass
 class LoadedASR:
-    """Container holding a ready-to-use Whisper pipeline + metadata."""
+    """Container for either a HF ASR pipeline or a faster-whisper model."""
 
-    pipe: Any  # transformers Pipeline; typed loosely to avoid version drift
+    backend: Literal["transformers", "faster_whisper"]
+    pipe: Any | None  # transformers Pipeline when backend == transformers
+    faster_model: Any | None  # faster_whisper.WhisperModel when backend == faster_whisper
     device: str  # 'cuda' or 'cpu'
-    dtype: str   # 'float16' | 'bfloat16' | 'float32'
+    dtype: str  # torch dtype name or CTranslate2 compute_type string
     model_id: str
     sample_rate: int
+
+    def transcribe_sync(
+        self,
+        audio: np.ndarray,
+        sample_rate: int,
+        generate_kwargs: dict[str, Any],
+    ) -> str:
+        """Run synchronous inference; called from a thread pool by StreamingEngine."""
+        if self.backend == "transformers":
+            return _transcribe_transformers_pipeline(
+                self.pipe, audio, sample_rate, generate_kwargs
+            )
+        return _transcribe_faster_whisper(
+            self.faster_model, audio, generate_kwargs
+        )
 
 
 def _resolve_device(setting: str) -> str:
@@ -62,21 +81,43 @@ def _resolve_dtype(device: str, settings: Settings) -> torch.dtype:
     return torch.float32
 
 
-def load_asr(settings: Settings | None = None) -> LoadedASR:
-    """Load the Whisper pipeline and return it wrapped in `LoadedASR`."""
-    settings = settings or get_settings()
+def _transcribe_transformers_pipeline(
+    pipe: Any,
+    audio: np.ndarray,
+    sample_rate: int,
+    generate_kwargs: dict[str, Any],
+) -> str:
+    try:
+        result = pipe(
+            {"array": audio, "sampling_rate": sample_rate},
+            generate_kwargs=generate_kwargs,
+        )
+    except TypeError:
+        result = pipe({"array": audio, "sampling_rate": sample_rate})
+    if isinstance(result, dict):
+        return result.get("text", "") or ""
+    if isinstance(result, list) and result and isinstance(result[0], dict):
+        return result[0].get("text", "") or ""
+    return str(result or "")
 
+
+def _transcribe_faster_whisper(
+    model: Any,
+    audio: np.ndarray,
+    generate_kwargs: dict[str, Any],
+) -> str:
+    language = generate_kwargs.get("language")
+    task = generate_kwargs.get("task", "transcribe")
+    kw: dict[str, Any] = {"task": task}
+    if language:
+        kw["language"] = language
+    segments, _info = model.transcribe(audio, **kw)
+    return "".join(s.text for s in segments).strip()
+
+
+def _load_transformers_pipeline(settings: Settings) -> Any:
     device = _resolve_device(settings.device)
     torch_dtype = _resolve_dtype(device, settings)
-
-    log.info(
-        "asr_model_loading",
-        extra={
-            "model_id": settings.model_id,
-            "device": device,
-            "dtype": str(torch_dtype).replace("torch.", ""),
-        },
-    )
 
     is_adapter_model = False
     base_model_id: str | None = None
@@ -132,9 +173,78 @@ def load_asr(settings: Settings | None = None) -> LoadedASR:
         except Exception:  # noqa: BLE001 - eval() on some wrappers is a no-op
             pass
 
+    return pipe
+
+
+def _load_faster_whisper_model(settings: Settings) -> tuple[Any, str, str]:
+    from faster_whisper import WhisperModel
+
+    device = _resolve_device(settings.device)
+    compute_type = (
+        settings.faster_whisper_cuda_compute_type
+        if device == "cuda"
+        else settings.faster_whisper_cpu_compute_type
+    )
+    model = WhisperModel(
+        settings.model_id,
+        device=device,
+        compute_type=compute_type,
+    )
+    return model, device, compute_type
+
+
+def load_asr(settings: Settings | None = None) -> LoadedASR:
+    """Load the configured ASR backend and return it wrapped in ``LoadedASR``."""
+    settings = settings or get_settings()
+
+    if settings.backend == "faster_whisper":
+        log.info(
+            "asr_model_loading",
+            extra={
+                "backend": "faster_whisper",
+                "model_id": settings.model_id,
+                "device": _resolve_device(settings.device),
+            },
+        )
+        faster_model, device, compute_type = _load_faster_whisper_model(settings)
+        log.info(
+            "asr_model_loaded",
+            extra={
+                "backend": "faster_whisper",
+                "model_id": settings.model_id,
+                "device": device,
+                "compute_type": compute_type,
+            },
+        )
+        return LoadedASR(
+            backend="faster_whisper",
+            pipe=None,
+            faster_model=faster_model,
+            device=device,
+            dtype=compute_type,
+            model_id=settings.model_id,
+            sample_rate=settings.target_sample_rate,
+        )
+
+    device = _resolve_device(settings.device)
+    torch_dtype = _resolve_dtype(device, settings)
+
+    log.info(
+        "asr_model_loading",
+        extra={
+            "backend": "transformers",
+            "model_id": settings.model_id,
+            "device": device,
+            "dtype": str(torch_dtype).replace("torch.", ""),
+        },
+    )
+
+    pipe = _load_transformers_pipeline(settings)
+
     log.info(
         "asr_model_loaded",
         extra={
+            "backend": "transformers",
             "model_id": settings.model_id,
             "device": device,
             "dtype": str(torch_dtype).replace("torch.", ""),
@@ -142,7 +252,9 @@ def load_asr(settings: Settings | None = None) -> LoadedASR:
     )
 
     return LoadedASR(
+        backend="transformers",
         pipe=pipe,
+        faster_model=None,
         device=device,
         dtype=str(torch_dtype).replace("torch.", ""),
         model_id=settings.model_id,

@@ -35,7 +35,13 @@ log = get_logger(__name__)
 async def lifespan(app: FastAPI):
     """Load the ASR model and start the session manager on startup."""
     settings = get_settings()
-    log.info("app_startup", extra={"model_id": settings.model_id})
+    log.info(
+        "app_startup",
+        extra={
+            "backend": settings.backend,
+            "model_id": settings.model_id,
+        },
+    )
 
     asr = load_asr(settings)
     engine = StreamingEngine(asr=asr, settings=settings)
@@ -50,6 +56,7 @@ async def lifespan(app: FastAPI):
     log.info(
         "app_ready",
         extra={
+            "backend": settings.backend,
             "device": asr.device,
             "dtype": asr.dtype,
             "sample_rate": asr.sample_rate,
@@ -80,6 +87,7 @@ async def root() -> dict:
     settings = get_settings()
     return {
         "service": "realtime-asr-backend",
+        "backend": settings.backend,
         "model": settings.model_id,
         "ws_endpoint": "/ws/transcribe",
         "test_client": "/client",
@@ -98,6 +106,7 @@ async def health_ready() -> JSONResponse:
     ready = asr is not None and sessions is not None
     payload = {
         "status": "ready" if ready else "not_ready",
+        "backend": asr.backend if asr else None,
         "model_id": asr.model_id if asr else None,
         "device": asr.device if asr else None,
         "active_sessions": sessions.active_count() if sessions else 0,
