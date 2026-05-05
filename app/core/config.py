@@ -3,10 +3,14 @@
 All tunables for the ASR backend live here. Values are loaded from environment
 variables (with `ASR_` prefix) and an optional `.env` file at the project root.
 
-Examples (PowerShell) — Hugging Face Transformers (incl. PEFT adapter):
+Examples (PowerShell) — Hugging Face Transformers, PEFT adapter (auto-detect):
     $env:ASR_BACKEND = "transformers"
+    $env:ASR_TRANSFORMERS_LOAD_MODE = "auto"
     $env:ASR_MODEL_ID = "SPEAK-ASR/whisper-si-exp-10-medium-all"
-    $env:ASR_DEVICE   = "auto"  # auto | cuda | cpu
+
+Examples — merged / full single checkpoint (no adapter path):
+    $env:ASR_TRANSFORMERS_LOAD_MODE = "full"
+    $env:ASR_MODEL_ID = "your-org/merged-whisper-si"
 
 Examples — faster-whisper (CTranslate2 checkpoint on Hugging Face):
     $env:ASR_BACKEND = "faster_whisper"
@@ -41,6 +45,13 @@ class Settings(BaseSettings):
     model_id: str = Field(
         default="SPEAK-ASR/whisper-si-exp-10-medium-all",
         description="Model id or path: HF repo for transformers or faster-whisper CTranslate2 export.",
+    )
+    transformers_load_mode: Literal["auto", "full"] = Field(
+        default="auto",
+        description=(
+            "transformers backend only. auto = detect PEFT adapter from config; "
+            "full = load model_id as one merged/full checkpoint (skip adapter path)."
+        ),
     )
     language_hint: str = Field(default="si", description="Whisper language hint, e.g. 'si' for Sinhala.")
     task: Literal["transcribe", "translate"] = "transcribe"

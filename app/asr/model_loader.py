@@ -3,7 +3,7 @@
 Supports two backends (see ``Settings.backend``):
 
 - **transformers**: Hugging Face ``AutomaticSpeechRecognition`` pipeline
-  (full weights or PEFT adapter + base).
+  (PEFT adapter + base when detected, or a single merged/full checkpoint).
 - **faster_whisper**: CTranslate2 models (e.g. ``model.bin`` on Hugging Face),
   loaded via ``faster_whisper.WhisperModel``.
 
@@ -121,16 +121,26 @@ def _load_transformers_pipeline(settings: Settings) -> Any:
 
     is_adapter_model = False
     base_model_id: str | None = None
-    try:
-        cfg = AutoConfig.from_pretrained(settings.model_id)
-        peft_cfg = getattr(cfg, "peft", None)
-        if isinstance(peft_cfg, dict):
-            base_model_id = peft_cfg.get("base_model_name_or_path")
-            is_adapter_model = bool(base_model_id)
-    except Exception:  # noqa: BLE001 - remote metadata can be incomplete
-        is_adapter_model = False
+    if settings.transformers_load_mode == "full":
+        log.info(
+            "asr_transformers_load_mode",
+            extra={"mode": "full", "note": "single checkpoint (merged or native full weights)"},
+        )
+    else:
+        try:
+            cfg = AutoConfig.from_pretrained(settings.model_id)
+            peft_cfg = getattr(cfg, "peft", None)
+            if isinstance(peft_cfg, dict):
+                base_model_id = peft_cfg.get("base_model_name_or_path")
+                is_adapter_model = bool(base_model_id)
+        except Exception:  # noqa: BLE001 - remote metadata can be incomplete
+            is_adapter_model = False
 
-    if is_adapter_model and base_model_id:
+    if (
+        settings.transformers_load_mode == "auto"
+        and is_adapter_model
+        and base_model_id
+    ):
         from peft import PeftModel  # imported lazily to keep non-PEFT path light
 
         log.info(
