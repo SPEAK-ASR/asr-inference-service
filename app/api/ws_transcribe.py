@@ -1,12 +1,18 @@
 """WebSocket gateway for `/ws/transcribe`.
 
-Handles the protocol from section 6 of `investigated_detail.md`:
-client sends ``start``, then ``audio_chunk`` repeatedly, optionally
-``end_utterance`` to finalize, ``ping`` for heartbeats, ``stop`` to close.
+Contract for mobile/other clients: ``docs/websocket-protocol.md`` and
+``docs/flutter-websocket-guide.md``.
+Summary: text JSON only; PCM16 mono at ``ASR_TARGET_SAMPLE_RATE`` (default 16 kHz)
+inside ``audio_chunk.audio_b64`` (Base64).
 
-The route owns one background task per session that flushes partial
-transcripts on a fixed interval. Final decodes happen inline on
-``end_utterance`` / ``stop``.
+Flow: ``start`` (first message), then repeated ``audio_chunk``, optional ``end_utterance``,
+``ping``, ``stop``. Partial/final hypotheses use ``partial_transcript`` /
+``final_transcript`` (not a single ``isFinal`` flag).
+
+Investigated-detail background: section 6 of ``investigated_detail.md``.
+
+The route owns one background task per session that flushes partial transcripts on a fixed
+interval. Final decodes happen inline on ``end_utterance`` / ``stop``.
 """
 
 from __future__ import annotations
