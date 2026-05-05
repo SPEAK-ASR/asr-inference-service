@@ -159,6 +159,15 @@ def _load_transformers_pipeline(settings: Settings) -> Any:
         if settings.merge_peft_adapter:
             log.info("asr_peft_merging", extra={"note": "merge_and_unload for inference"})
             model = model.merge_and_unload()
+        # Adapter-only repos (no preprocessor_config.json) still appear on the loaded
+        # model's config; the ASR pipeline would otherwise fetch the feature extractor
+        # from ASR_MODEL_ID and 404. Point Hub resolution at the base checkpoint.
+        if getattr(model.config, "_name_or_path", None) not in (None, "", base_model_id):
+            log.info(
+                "asr_fix_processor_hub_id",
+                extra={"from": model.config._name_or_path, "to": base_model_id},
+            )
+        model.config._name_or_path = base_model_id
 
         pipe = pipeline(
             task="automatic-speech-recognition",
