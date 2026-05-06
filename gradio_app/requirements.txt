@@ -1,0 +1,14 @@
+# Dependencies for the standalone Gradio demo (separate from the main FastAPI service)
+
+# --- UI framework ---
+gradio>=4.36,<5
+
+# --- ML stack ---
+torch>=2.2
+torchaudio>=2.2
+transformers>=4.44,<5
+peft>=0.13
+numpy>=1.26,<3
+
+# --- VAD ---
+silero-vad>=6,<7

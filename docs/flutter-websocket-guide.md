@@ -10,7 +10,7 @@ This guide matches the **current** Python service implementation (`app/api/ws_tr
 
 1. Open a WebSocket to **`/ws/transcribe`**.
 2. Send **`start`** once (must be the **first** JSON message).
-3. While the user speaks, repeatedly send **`audio_chunk`** with **Base64-encoded PCM16 mono** samples at **`ASR_TARGET_SAMPLE_RATE`** (server default **`16000` Hz`).
+3. While the user speaks, repeatedly send **`audio_chunk`** with **Base64-encoded PCM16 mono** samples at **`ASR_TARGET_SAMPLE_RATE`** (server default **`16000` Hz**).
 4. Read JSON messages from the socket: **`partial_transcript`** (interim text), **`final_transcript`** (committed line), **`ack`**, **`error`**, **`session_summary`**.
 5. Optionally send **`end_utterance`** to finalize the current phrase without closing the socket, or **`stop`** to finalize and disconnect cleanly.
 
@@ -250,14 +250,19 @@ class TranscriptionClient {
     switch (map['type']) {
       case 'ack':
         onAck(map);
+        break;
       case 'partial_transcript':
         onPartial(map);
+        break;
       case 'final_transcript':
         onFinal(map);
+        break;
       case 'error':
         onErrorPayload(map);
+        break;
       case 'session_summary':
         onSessionSummary(map);
+        break;
       default:
         onUnknown(map);
     }

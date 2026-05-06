@@ -79,7 +79,7 @@ Ends the **current utterance**: server runs a full-buffer decode and sends **`fi
 
 ### 4. `ping`
 
-Heartbeat; server replies with **`ack`** and **`message": "pong"`**.
+Heartbeat; server replies with **`ack`** and **`"message": "pong"`**.
 
 ### 5. `stop`
 
