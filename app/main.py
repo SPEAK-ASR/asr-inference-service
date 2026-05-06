@@ -4,11 +4,13 @@ Run:
     uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 Endpoints:
-    GET  /                 -> root summary
-    GET  /health/live      -> liveness (process up)
-    GET  /health/ready     -> readiness (model loaded, device available)
-    WS   /ws/transcribe    -> realtime transcription
-    GET  /client           -> manual mic test page (tests/manual/client.html)
+    GET  /                        -> root summary
+    GET  /health/live             -> liveness (process up)
+    GET  /health/ready            -> readiness (model loaded, device available)
+    WS   /ws/transcribe           -> realtime transcription
+    GET  /client                  -> manual mic test page (tests/manual/client.html)
+    GET  /admin/diarization       -> diarization status (enabled, model_loaded)
+    POST /admin/diarization       -> toggle diarization on/off at runtime
 """
 
 from __future__ import annotations
@@ -16,10 +18,17 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import torch
+
+# NNPACK is CPU-only; it often fails in Docker/AMD cloud with repeated
+# "Unsupported hardware" stderr noise. Disabling it uses other CPU kernels.
+torch.backends.nnpack.enabled = False
+
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.admin import router as admin_router
 from app.api.ws_transcribe import router as ws_router
 from app.asr.model_loader import load_asr
 from app.asr.streaming_engine import StreamingEngine
@@ -58,6 +67,8 @@ async def lifespan(app: FastAPI):
     app.state.asr = asr
     app.state.engine = engine
     app.state.sessions = sessions
+    app.state.diarization_enabled = False
+    app.state.diarizer = None  # loaded lazily via POST /admin/diarization
 
     log.info(
         "app_ready",
@@ -121,6 +132,7 @@ async def health_ready() -> JSONResponse:
 
 
 app.include_router(ws_router)
+app.include_router(admin_router)
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Pydantic schemas for the WebSocket transcription protocol.
+"""Pydantic schemas for the WebSocket transcription protocol and admin API.
 
 Implements the contract described in section 6 of `investigated_detail.md`.
 
@@ -12,6 +12,18 @@ from __future__ import annotations
 from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+# -----------------------------------------------------------------------------
+# Shared / embedded models
+# -----------------------------------------------------------------------------
+
+class SpeakerSegment(BaseModel):
+    """A contiguous audio span attributed to one speaker, embedded in FinalTranscript."""
+
+    speaker: str
+    start_ms: int
+    end_ms: int
 
 
 # -----------------------------------------------------------------------------
@@ -99,6 +111,8 @@ class FinalTranscript(_BaseServerMsg):
     text: str
     start_ms: int
     end_ms: int
+    speaker: str | None = None
+    speaker_segments: list[SpeakerSegment] | None = None
 
 
 class Warning(_BaseServerMsg):
@@ -125,6 +139,23 @@ ServerMessage = Annotated[
     Union[Ack, PartialTranscript, FinalTranscript, Warning, Error, SessionSummary],
     Field(discriminator="type"),
 ]
+
+
+# -----------------------------------------------------------------------------
+# Admin API models
+# -----------------------------------------------------------------------------
+
+class DiarizationToggle(BaseModel):
+    """Request body for POST /admin/diarization."""
+
+    enabled: bool
+
+
+class DiarizationStatus(BaseModel):
+    """Response for GET and POST /admin/diarization."""
+
+    enabled: bool
+    model_loaded: bool
 
 
 # Standard error codes (section 9 of investigated_detail.md)

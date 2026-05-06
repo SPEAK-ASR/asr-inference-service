@@ -36,6 +36,9 @@ class SessionState:
     session_id: str
     sample_rate: int
     language_hint: str | None
+    enable_diarization: bool = False
+    """Snapshot of app.state.diarization_enabled taken at session start.
+    Toggling diarization mid-session does not affect in-flight utterances."""
     utterance_id: str = field(default_factory=lambda: f"u{uuid.uuid4().hex[:8]}")
     engine_buffer: EngineBuffer = field(init=False)
     decoder: IncrementalDecoder = field(default_factory=IncrementalDecoder)

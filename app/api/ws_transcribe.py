@@ -44,6 +44,7 @@ from app.sessions.schemas import (
     PartialTranscript,
     PingMsg,
     SessionSummary,
+    SpeakerSegment,
     StartMsg,
     StopMsg,
 )
@@ -60,6 +61,57 @@ def _engine(ws: WebSocket) -> StreamingEngine:
 
 def _manager(ws: WebSocket) -> SessionManager:
     return ws.app.state.sessions  # type: ignore[no-any-return]
+
+
+async def _run_diarization(
+    ws: WebSocket,
+    audio: np.ndarray,
+    sample_rate: int,
+    segment_start_ms: int,
+) -> tuple[str | None, list[SpeakerSegment] | None]:
+    """Run speaker diarization on *audio* and return (dominant_speaker, segments).
+
+    Returns ``(None, None)`` if the diarizer is not ready or fails.
+    Segment timestamps are expressed relative to the utterance start
+    (``segment_start_ms`` is the absolute start offset used to compute
+    each span's absolute ``start_ms`` / ``end_ms``).
+    """
+    diarizer = ws.app.state.diarizer
+    if diarizer is None:
+        return None, None
+
+    try:
+        loop = asyncio.get_running_loop()
+        async with diarizer.lock:
+            spans = await loop.run_in_executor(
+                None,
+                diarizer.diarize_sync,
+                audio,
+                sample_rate,
+            )
+    except Exception:  # noqa: BLE001
+        log.exception("diarization_failed")
+        return None, None
+
+    if not spans:
+        return None, None
+
+    segments = [
+        SpeakerSegment(
+            speaker=span.speaker,
+            start_ms=segment_start_ms + int(span.start_sec * 1000),
+            end_ms=segment_start_ms + int(span.end_sec * 1000),
+        )
+        for span in spans
+    ]
+
+    # Dominant speaker = longest total duration across all spans
+    duration: dict[str, float] = {}
+    for span in spans:
+        duration[span.speaker] = duration.get(span.speaker, 0.0) + (span.end_sec - span.start_sec)
+    dominant = max(duration, key=duration.__getitem__)
+
+    return dominant, segments
 
 
 async def _send_json(ws: WebSocket, payload: Any) -> None:
@@ -135,6 +187,7 @@ async def ws_transcribe(ws: WebSocket) -> None:
             session_id=first.session_id,
             sample_rate=first.sample_rate,
             language_hint=first.language_hint or settings.language_hint,
+            enable_diarization=ws.app.state.diarization_enabled,
         )
 
         async def close_cb(reason: str) -> None:
@@ -254,6 +307,13 @@ async def _emit_final_for_segment(
     start_ms = max(0, end_ms - int(len(segment_audio) / float(sample_rate) * 1000))
     utterance_id = state.utterance_id
 
+    speaker: str | None = None
+    speaker_segments: list[SpeakerSegment] | None = None
+    if state.enable_diarization:
+        speaker, speaker_segments = await _run_diarization(
+            ws, segment_audio, sample_rate, start_ms
+        )
+
     await _send_json(
         ws,
         FinalTranscript(
@@ -262,6 +322,8 @@ async def _emit_final_for_segment(
             text=final_text,
             start_ms=start_ms,
             end_ms=end_ms,
+            speaker=speaker,
+            speaker_segments=speaker_segments,
         ),
     )
     log.info(
@@ -271,6 +333,7 @@ async def _emit_final_for_segment(
             "utterance_id": utterance_id,
             "decode_ms": int(decode_seconds * 1000),
             "text_len": len(final_text),
+            "speaker": speaker,
         },
     )
 
@@ -434,6 +497,14 @@ async def _finalize_utterance(
     start_ms = max(0, end_ms - int(state.engine_buffer.duration_seconds * 1000))
     utterance_id = state.utterance_id
 
+    speaker: str | None = None
+    speaker_segments: list[SpeakerSegment] | None = None
+    if state.enable_diarization:
+        utterance_audio = np.ascontiguousarray(state.engine_buffer.samples, dtype=np.float32)
+        speaker, speaker_segments = await _run_diarization(
+            ws, utterance_audio, state.sample_rate, start_ms
+        )
+
     await _send_json(
         ws,
         FinalTranscript(
@@ -442,6 +513,8 @@ async def _finalize_utterance(
             text=final_text,
             start_ms=start_ms,
             end_ms=end_ms,
+            speaker=speaker,
+            speaker_segments=speaker_segments,
         ),
     )
     log.info(
@@ -451,6 +524,7 @@ async def _finalize_utterance(
             "utterance_id": utterance_id,
             "decode_ms": int(decode_seconds * 1000),
             "text_len": len(final_text),
+            "speaker": speaker,
         },
     )
 

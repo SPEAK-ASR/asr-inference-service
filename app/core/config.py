@@ -123,6 +123,15 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: Literal["debug", "info", "warning", "error"] = "info"
 
+    # --- Diarization ---
+    diarization_hf_token: str | None = Field(
+        default=None,
+        description=(
+            "HuggingFace token for the gated pyannote/speaker-diarization-3.1 model. "
+            "Required when diarization is toggled on via POST /admin/diarization."
+        ),
+    )
+
     # --- Limits ---
     max_chunk_bytes: int = 256 * 1024
     """Reject incoming audio_chunk bigger than this (post-base64-decode)."""
