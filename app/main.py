@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
     log.info(
         "app_startup",
         extra={
-            "backend": settings.backend,
+            "model_kind": settings.model_kind,
             "model_id": settings.model_id,
         },
     )
@@ -62,7 +62,8 @@ async def lifespan(app: FastAPI):
     log.info(
         "app_ready",
         extra={
-            "backend": settings.backend,
+            "model_kind": asr.model_kind,
+            "backend": asr.backend,
             "device": asr.device,
             "dtype": asr.dtype,
             "sample_rate": asr.sample_rate,
@@ -93,6 +94,7 @@ async def root() -> dict:
     settings = get_settings()
     return {
         "service": "realtime-asr-backend",
+        "model_kind": settings.model_kind,
         "backend": settings.backend,
         "model": settings.model_id,
         "ws_endpoint": "/ws/transcribe",
@@ -112,9 +114,11 @@ async def health_ready() -> JSONResponse:
     ready = asr is not None and sessions is not None
     payload = {
         "status": "ready" if ready else "not_ready",
+        "model_kind": asr.model_kind if asr else None,
         "backend": asr.backend if asr else None,
         "model_id": asr.model_id if asr else None,
         "device": asr.device if asr else None,
+        "dtype": asr.dtype if asr else None,
         "active_sessions": sessions.active_count() if sessions else 0,
     }
     return JSONResponse(content=payload, status_code=200 if ready else 503)

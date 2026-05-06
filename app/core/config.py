@@ -3,28 +3,48 @@
 All tunables for the ASR backend live here. Values are loaded from environment
 variables (with `ASR_` prefix) and an optional `.env` file at the project root.
 
-Examples (PowerShell) — Hugging Face Transformers, PEFT adapter (auto-detect):
-    $env:ASR_BACKEND = "transformers"
-    $env:ASR_TRANSFORMERS_LOAD_MODE = "auto"
-    $env:ASR_MODEL_ID = "SPEAK-ASR/whisper-si-exp-10-medium-all"
+The model is selected via a single knob: ``ASR_MODEL_KIND``. There are three
+supported model kinds, matching the three ways we ship Sinhala Whisper:
 
-Examples — merged / full single checkpoint (no adapter path):
-    $env:ASR_TRANSFORMERS_LOAD_MODE = "full"
-    $env:ASR_MODEL_ID = "your-org/merged-whisper-si"
+1. ``peft``           — PEFT/LoRA adapter on top of a base Whisper checkpoint.
+                        Base model is detected from ``adapter_config.json``
+                        (override with ``ASR_BASE_MODEL_ID`` if needed).
+2. ``merged``         — A single, fully-merged Hugging Face checkpoint
+                        (e.g. an exported merge of base + LoRA).
+3. ``faster_whisper`` — A CTranslate2 export (``model.bin``) loaded via
+                        ``faster_whisper.WhisperModel``.
 
-Examples — faster-whisper (CTranslate2 checkpoint on Hugging Face):
-    $env:ASR_BACKEND = "faster_whisper"
-    $env:ASR_MODEL_ID = "irudachirath/faster-whisper-medium-si-exp10-fp16"
+Examples (PowerShell):
+
+    # PEFT adapter (auto-detect base):
+    $env:ASR_MODEL_KIND = "peft"
+    $env:ASR_MODEL_ID   = "SPEAK-ASR/whisper-si-exp-10-medium-all"
+
+    # PEFT adapter (explicit base override):
+    $env:ASR_MODEL_KIND     = "peft"
+    $env:ASR_MODEL_ID       = "SPEAK-ASR/whisper-si-exp-10-medium-all"
+    $env:ASR_BASE_MODEL_ID  = "openai/whisper-medium"
+
+    # Single merged checkpoint:
+    $env:ASR_MODEL_KIND = "merged"
+    $env:ASR_MODEL_ID   = "your-org/whisper-si-merged"
+
+    # faster-whisper / CTranslate2:
+    $env:ASR_MODEL_KIND                     = "faster_whisper"
+    $env:ASR_MODEL_ID                       = "irudachirath/faster-whisper-medium-si-exp10-fp16"
     $env:ASR_FASTER_WHISPER_CUDA_COMPUTE_TYPE = "float16"
 """
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+ModelKind = Literal["peft", "merged", "faster_whisper"]
 
 
 class Settings(BaseSettings):
@@ -37,41 +57,76 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # --- Model ---
-    backend: Literal["transformers", "faster_whisper"] = Field(
-        default="transformers",
-        description="transformers = HF AutoModel/pipeline (incl. PEFT adapters); faster_whisper = CTranslate2 (e.g. model.bin on HF).",
+    @model_validator(mode="before")
+    @classmethod
+    def _map_legacy_backend_env(cls, data: Any) -> Any:
+        """Support deprecated ``ASR_BACKEND`` + ``ASR_TRANSFORMERS_LOAD_MODE`` env vars.
+
+        If ``ASR_MODEL_KIND`` is unset, derive ``model_kind`` from the legacy pair
+        exactly as older releases did:
+        - ``ASR_BACKEND=faster_whisper`` → ``faster_whisper``
+        - ``ASR_BACKEND=transformers`` + ``ASR_TRANSFORMERS_LOAD_MODE=full`` → ``merged``
+        - otherwise → ``peft``
+        """
+        if not isinstance(data, dict):
+            return data
+        mk = data.get("model_kind")
+        if mk not in (None, ""):
+            return data
+
+        b = (os.environ.get("ASR_BACKEND") or "").strip().lower()
+        tm = (os.environ.get("ASR_TRANSFORMERS_LOAD_MODE") or "").strip().lower()
+        if b == "faster_whisper":
+            data["model_kind"] = "faster_whisper"
+        elif b == "transformers":
+            data["model_kind"] = "merged" if tm == "full" else "peft"
+        return data
+
+    # --- Model selection ---
+    model_kind: ModelKind = Field(
+        default="peft",
+        description=(
+            "How to load the model: "
+            "'peft' = LoRA/PEFT adapter + base; "
+            "'merged' = single full HF checkpoint; "
+            "'faster_whisper' = CTranslate2 export."
+        ),
     )
     model_id: str = Field(
         default="SPEAK-ASR/whisper-si-exp-10-medium-all",
-        description="Model id or path: HF repo for transformers or faster-whisper CTranslate2 export.",
+        description="HF repo id or local path of the model_kind-specific artifact.",
     )
-    transformers_load_mode: Literal["auto", "full"] = Field(
-        default="auto",
+    base_model_id: str | None = Field(
+        default=None,
         description=(
-            "transformers backend only. auto = detect PEFT adapter from config; "
-            "full = load model_id as one merged/full checkpoint (skip adapter path)."
+            "PEFT only: explicit base-model override. If None, the loader reads "
+            "base_model_name_or_path from the adapter's config."
         ),
+    )
+    merge_peft_adapter: bool = Field(
+        default=True,
+        description="PEFT only: merge LoRA into base weights before inference.",
     )
     language_hint: str = Field(default="si", description="Whisper language hint, e.g. 'si' for Sinhala.")
     task: Literal["transcribe", "translate"] = "transcribe"
 
-    merge_peft_adapter: bool = Field(
-        default=True,
-        description=(
-            "transformers + PEFT adapter path only: merge LoRA into base weights "
-            "before inference (same as the reference Gradio Space)."
-        ),
-    )
-
-    # --- faster-whisper (CTranslate2) only; ignored when backend=transformers ---
-    faster_whisper_cuda_compute_type: str = Field(
+    # --- faster-whisper (CTranslate2) only; ignored for other kinds ---
+    faster_whisper_cuda_compute_type: Literal[
+        "float16", "int8_float16", "bfloat16", "int8", "float32"
+    ] = Field(
         default="float16",
-        description="CTranslate2 compute_type on GPU (e.g. float16, int8_float16).",
+        description="CTranslate2 compute_type on GPU.",
     )
-    faster_whisper_cpu_compute_type: str = Field(
+    faster_whisper_cpu_compute_type: Literal["int8", "int8_float32", "float32"] = Field(
         default="int8",
-        description="CTranslate2 compute_type on CPU (e.g. int8, float32).",
+        description="CTranslate2 compute_type on CPU.",
+    )
+    faster_whisper_beam_size: int = Field(
+        default=1,
+        description=(
+            "Beam size for faster-whisper. 1 (greedy) is fast and stable for "
+            "streaming; raise for offline/quality-priority decoding."
+        ),
     )
 
     # --- Device / precision ---
@@ -126,6 +181,17 @@ class Settings(BaseSettings):
     # --- Limits ---
     max_chunk_bytes: int = 256 * 1024
     """Reject incoming audio_chunk bigger than this (post-base64-decode)."""
+
+    # --- Derived helpers -----------------------------------------------------
+
+    @property
+    def backend(self) -> Literal["transformers", "faster_whisper"]:
+        """Inference dispatch backend implied by ``model_kind``.
+
+        Both ``peft`` and ``merged`` run through the Hugging Face pipeline
+        ('transformers' backend); ``faster_whisper`` is its own backend.
+        """
+        return "faster_whisper" if self.model_kind == "faster_whisper" else "transformers"
 
 
 @lru_cache(maxsize=1)
