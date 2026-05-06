@@ -117,16 +117,16 @@ def _load_embedder(settings: Settings) -> Any:
             "diarization_embedder_loading",
             extra={"model_id": settings.diarization_embedding_model_id},
         )
-        # PyTorch ≥ 2.6 sets weights_only=True by default in torch.load.
-        # TorchVersion is embedded in pyannote checkpoints and must be
-        # explicitly allowlisted so deserialization succeeds.
-        import torch.torch_version  # noqa: PLC0415
-        torch.serialization.add_safe_globals([torch.torch_version.TorchVersion])
-
         load_kwargs: dict[str, Any] = {}
         if settings.hf_token:
             load_kwargs["use_auth_token"] = settings.hf_token
-        model = Model.from_pretrained(settings.diarization_embedding_model_id, **load_kwargs)
+
+        _orig_load = torch.load
+        torch.load = lambda *a, **kw: _orig_load(*a, **{**kw, "weights_only": False})
+        try:
+            model = Model.from_pretrained(settings.diarization_embedding_model_id, **load_kwargs)
+        finally:
+            torch.load = _orig_load
         device = _resolve_torch_device(settings)
         try:
             model.to(device)
