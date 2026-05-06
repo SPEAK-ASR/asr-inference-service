@@ -15,14 +15,24 @@ Endpoints:
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+# Before `import torch`: NNPACK prints to stderr via C++ LOG(WARNING) when
+# nnp_initialize() fails (common in Docker/ROCm). This only affects libtorch log
+# verbosity, not application Python logging. Override in the environment if needed.
+os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
+
 import torch
 
-# NNPACK is CPU-only; it often fails in Docker/AMD cloud with repeated
-# "Unsupported hardware" stderr noise. Disabling it uses other CPU kernels.
-torch.backends.nnpack.enabled = False
+_nnpack = getattr(torch.backends, "nnpack", None)
+if _nnpack is not None:
+    _set = getattr(_nnpack, "set_flags", None)
+    if callable(_set):
+        _set(False)
+    else:
+        _nnpack.enabled = False
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
