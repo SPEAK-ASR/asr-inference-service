@@ -16,6 +16,27 @@ router = APIRouter(prefix="/api", tags=["transcription"])
 log = get_logger(__name__)
 
 
+def _content_type_allowed(content_type: str | None, allowed_patterns: list[str]) -> bool:
+    """Match MIME types against exact values and wildcard patterns."""
+    normalized = (content_type or "").strip().lower()
+    if not normalized:
+        return False
+
+    for pattern in allowed_patterns:
+        token = pattern.strip().lower()
+        if not token:
+            continue
+        if token == "*/*":
+            return True
+        if token.endswith("/*"):
+            prefix = token[:-1]
+            if normalized.startswith(prefix):
+                return True
+        elif normalized == token:
+            return True
+    return False
+
+
 def _validate_upload(file: UploadFile, payload_size: int, settings: Settings) -> None:
     if payload_size == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded audio is empty.")
@@ -24,7 +45,7 @@ def _validate_upload(file: UploadFile, payload_size: int, settings: Settings) ->
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"Audio exceeds {settings.http_transcribe_max_upload_bytes} bytes.",
         )
-    if file.content_type not in settings.http_transcribe_allowed_mime_types:
+    if not _content_type_allowed(file.content_type, settings.http_transcribe_allowed_mime_types):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported audio content type: {file.content_type!r}.",

@@ -39,7 +39,7 @@ def _make_client() -> TestClient:
         target_sample_rate=16000,
         language_hint="si",
         http_transcribe_max_upload_bytes=1024 * 1024,
-        http_transcribe_allowed_mime_types=["audio/wav", "audio/webm"],
+        http_transcribe_allowed_mime_types=["audio/*", "video/*"],
         http_transcribe_timeout_seconds=10,
     )
     app.state.engine = _DummyEngine()
@@ -65,7 +65,7 @@ def test_http_transcribe_missing_audio_file() -> None:
 
 def test_http_transcribe_unsupported_type() -> None:
     client = _make_client()
-    files = {"audio_file": ("clip.wav", _wav_bytes(), "audio/mp3")}
+    files = {"audio_file": ("clip.txt", b"not audio", "text/plain")}
     response = client.post("/api/transcribe", files=files)
     assert response.status_code == 400
 

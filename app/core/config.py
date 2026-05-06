@@ -193,18 +193,11 @@ class Settings(BaseSettings):
 
     http_transcribe_allowed_mime_types: list[str] = Field(
         default_factory=lambda: [
-            "audio/wav",
-            "audio/x-wav",
-            "audio/webm",
-            "audio/mpeg",
-            "audio/mp3",
-            "audio/mp4",
-            "audio/x-m4a",
-            "audio/aac",
-            "audio/ogg",
+            "audio/*",
+            "video/*",
         ]
     )
-    """Allowed MIME types for synchronous HTTP transcription uploads."""
+    """Allowed MIME types for HTTP uploads (supports exact and wildcard patterns)."""
 
     http_transcribe_timeout_seconds: int = 120
     """Timeout for synchronous HTTP transcription calls."""
