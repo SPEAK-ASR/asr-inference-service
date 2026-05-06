@@ -170,6 +170,29 @@ goto AFTER_ENV
 :AFTER_ENV
 
 echo.
+echo HuggingFace Hub token - required for gated models such as pyannote
+echo diarization pipelines (pyannote/speaker-diarization-community-1).
+echo Get yours at https://hf.co/settings/tokens
+echo Also accept model conditions at https://hf.co/pyannote/speaker-diarization-community-1
+echo.
+set "V_HF_TOKEN="
+set /p V_HF_TOKEN="HF_TOKEN (Enter to skip): "
+if not "!V_HF_TOKEN!"=="" (
+  (
+    echo.
+    echo # HuggingFace Hub authentication ^(required for gated models^)
+    echo HF_TOKEN=!V_HF_TOKEN!
+  ) >> .env
+  echo Added HF_TOKEN to .env
+) else (
+  (
+    echo.
+    echo # HF_TOKEN=hf_xxxxxxxxxxxx  ^(set to access gated models e.g. pyannote diarization^)
+  ) >> .env
+  echo Skipped HF_TOKEN ^(uncomment and fill in .env later if you need gated models^).
+)
+
+echo.
 set "LAUNCH_PY=python"
 set "PY_EXTRA="
 where python >nul 2>&1

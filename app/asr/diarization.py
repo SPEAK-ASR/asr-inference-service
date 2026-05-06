@@ -79,7 +79,10 @@ def _load_pipeline(settings: Settings) -> Any:
             "diarization_pipeline_loading",
             extra={"model_id": settings.diarization_model_id},
         )
-        pipeline = Pipeline.from_pretrained(settings.diarization_model_id)
+        load_kwargs: dict[str, Any] = {}
+        if settings.hf_token:
+            load_kwargs["use_auth_token"] = settings.hf_token
+        pipeline = Pipeline.from_pretrained(settings.diarization_model_id, **load_kwargs)
         device = _resolve_torch_device(settings)
         try:
             pipeline.to(device)
@@ -114,7 +117,16 @@ def _load_embedder(settings: Settings) -> Any:
             "diarization_embedder_loading",
             extra={"model_id": settings.diarization_embedding_model_id},
         )
-        model = Model.from_pretrained(settings.diarization_embedding_model_id)
+        # PyTorch ≥ 2.6 sets weights_only=True by default in torch.load.
+        # TorchVersion is embedded in pyannote checkpoints and must be
+        # explicitly allowlisted so deserialization succeeds.
+        import torch.torch_version  # noqa: PLC0415
+        torch.serialization.add_safe_globals([torch.torch_version.TorchVersion])
+
+        load_kwargs: dict[str, Any] = {}
+        if settings.hf_token:
+            load_kwargs["use_auth_token"] = settings.hf_token
+        model = Model.from_pretrained(settings.diarization_embedding_model_id, **load_kwargs)
         device = _resolve_torch_device(settings)
         try:
             model.to(device)

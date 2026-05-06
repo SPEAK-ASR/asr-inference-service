@@ -41,7 +41,7 @@ import os
 from functools import lru_cache
 from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ModelKind = Literal["peft", "merged", "faster_whisper"]
@@ -166,6 +166,17 @@ class Settings(BaseSettings):
 
     min_audio_for_partial_seconds: float = 0.6
     """sliding_window mode: minimum buffered seconds before running a partial decode."""
+
+    # --- HuggingFace Hub authentication ---
+    hf_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("HF_TOKEN", "HUGGINGFACE_HUB_TOKEN", "ASR_HF_TOKEN"),
+        description=(
+            "HuggingFace Hub access token required for gated/private models "
+            "(e.g. pyannote diarization pipelines). "
+            "Set via HF_TOKEN, HUGGINGFACE_HUB_TOKEN, or ASR_HF_TOKEN."
+        ),
+    )
 
     # --- Speaker diarization (opt-in per session via start.enable_diarization) ---
     diarization_enabled_capability: bool = Field(

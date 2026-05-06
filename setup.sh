@@ -126,6 +126,31 @@ write_env_default() {
 EOF
 }
 
+append_hf_token() {
+  echo ""
+  echo "HuggingFace Hub token — required for gated models such as pyannote"
+  echo "diarization pipelines (pyannote/speaker-diarization-community-1)."
+  echo "Get yours at https://hf.co/settings/tokens"
+  echo "Also accept model conditions at https://hf.co/pyannote/speaker-diarization-community-1"
+  echo ""
+  local hf_token
+  hf_token="$(prompt_optional_blank "HF_TOKEN")"
+  if [[ -n "${hf_token}" ]]; then
+    {
+      echo ""
+      echo "# HuggingFace Hub authentication (required for gated models)"
+      echo "HF_TOKEN=${hf_token}"
+    } >> .env
+    echo "Added HF_TOKEN to .env"
+  else
+    {
+      echo ""
+      echo "# HF_TOKEN=hf_xxxxxxxxxxxx  (set to access gated models e.g. pyannote diarization)"
+    } >> .env
+    echo "Skipped HF_TOKEN (uncomment and fill in .env later if you need gated models)."
+  fi
+}
+
 case "$MODE_CHOICE" in
   1)
     backup_env
@@ -148,6 +173,8 @@ case "$MODE_CHOICE" in
     echo "Wrote minimal .env (default app settings)."
     ;;
 esac
+
+append_hf_token
 
 echo ""
 PY=""
