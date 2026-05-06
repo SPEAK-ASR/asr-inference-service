@@ -31,6 +31,13 @@ class StartMsg(_BaseClientMsg):
     encoding: Literal["pcm_s16le"] = "pcm_s16le"
     channels: Literal[1] = 1
     language_hint: str | None = Field(default="si", max_length=8)
+    enable_diarization: bool = Field(
+        default=False,
+        description=(
+            "Opt in to speaker diarization. When true, each `final_transcript` "
+            "carries a `turns` list with stable per-session `spk_N` ids."
+        ),
+    )
 
 
 class AudioChunkMsg(_BaseClientMsg):
@@ -92,6 +99,20 @@ class PartialTranscript(_BaseServerMsg):
     is_stable: bool = False
 
 
+class SpeakerTurn(_BaseServerMsg):
+    """One speaker-attributed slice of an utterance.
+
+    Times are absolute session-time milliseconds, matching `start_ms`/`end_ms`
+    on `FinalTranscript`. `speaker_id` is stable across `FinalTranscript`s
+    inside a single WebSocket session (e.g. `spk_1`, `spk_2`).
+    """
+
+    speaker_id: str
+    start_ms: int
+    end_ms: int
+    text: str
+
+
 class FinalTranscript(_BaseServerMsg):
     type: Literal["final_transcript"] = "final_transcript"
     session_id: str
@@ -99,6 +120,8 @@ class FinalTranscript(_BaseServerMsg):
     text: str
     start_ms: int
     end_ms: int
+    turns: list[SpeakerTurn] | None = None
+    """Populated only when the session opted in to diarization (`start.enable_diarization=true`)."""
 
 
 class Warning(_BaseServerMsg):
@@ -136,3 +159,8 @@ class ErrorCode:
     PROTOCOL_ERROR = "PROTOCOL_ERROR"
     SESSION_TIMEOUT = "SESSION_TIMEOUT"
     PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE"
+
+
+class WarningCode:
+    DIARIZATION_UNAVAILABLE = "DIARIZATION_UNAVAILABLE"
+    DIARIZATION_FAILED = "DIARIZATION_FAILED"

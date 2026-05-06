@@ -141,6 +141,42 @@
   #finals li .meta {
     font-size: 11px; color: var(--muted); margin-bottom: 4px;
   }
+  .turn {
+    display: flex; gap: 8px; align-items: flex-start;
+    padding: 4px 0;
+  }
+  .turn + .turn { border-top: 1px dashed var(--border); margin-top: 6px; padding-top: 8px; }
+  .chip {
+    display: inline-flex; align-items: center;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+    padding: 2px 8px; border-radius: 999px;
+    color: #0c0f15;
+    flex: 0 0 auto;
+    margin-top: 2px;
+  }
+  .turn-text { flex: 1; word-break: break-word; }
+  .turn-meta { font-size: 11px; color: var(--muted); margin-left: 6px; }
+
+  .diar-toggle {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; color: var(--text);
+    background: #0f131c; padding: 6px 10px; border-radius: 8px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+  }
+  .diar-toggle input { accent-color: var(--accent); }
+
+  .banner {
+    display: none;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: rgba(255,181,71,0.10);
+    border: 1px solid rgba(255,181,71,0.5);
+    color: #ffd596;
+    font-size: 13px;
+  }
+  .banner.visible { display: block; }
 
   #log {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -188,6 +224,12 @@
       <input id="langHint" value="si" style="min-width:60px" />
     </div>
     <div class="row">
+      <label class="diar-toggle" for="diarToggle">
+        <input type="checkbox" id="diarToggle" />
+        Speaker diarization
+      </label>
+    </div>
+    <div class="row">
       <button id="startBtn">Start streaming</button>
       <button id="endUttBtn" class="secondary" disabled>End utterance</button>
       <button id="stopBtn" class="danger" disabled>Stop</button>
@@ -196,6 +238,7 @@
         <div class="meter"><div id="meter"></div></div>
       </span>
     </div>
+    <div id="banner" class="banner"></div>
   </section>
 
   <section class="card">
@@ -226,6 +269,8 @@
   const wsUrlInput = $("wsUrl");
   const sessionIdInput = $("sessionId");
   const langInput = $("langHint");
+  const diarToggle = $("diarToggle");
+  const bannerEl = $("banner");
   const startBtn = $("startBtn");
   const endUttBtn = $("endUttBtn");
   const stopBtn = $("stopBtn");
@@ -323,7 +368,34 @@
   fetch("/health/ready").then(r => r.json()).then(j => {
     if (j.model_id) modelPill.textContent = "model: " + j.model_id;
     if (j.device) devicePill.textContent = "device: " + j.device;
+    if (j.diarization && j.diarization.capability === false) {
+      diarToggle.disabled = true;
+      diarToggle.parentElement.title = "Server has diarization disabled.";
+    }
   }).catch(() => {});
+
+  // ---------- Speaker color palette (stable per speaker_id) ----------
+  const SPEAKER_COLORS = [
+    "#7dd3fc", "#fda4af", "#86efac", "#fcd34d",
+    "#c4b5fd", "#fdba74", "#67e8f9", "#f9a8d4",
+  ];
+  function speakerColor(speakerId) {
+    let hash = 0;
+    for (let i = 0; i < speakerId.length; i++) {
+      hash = ((hash << 5) - hash) + speakerId.charCodeAt(i);
+      hash |= 0;
+    }
+    return SPEAKER_COLORS[Math.abs(hash) % SPEAKER_COLORS.length];
+  }
+  function showBanner(msg, kind = "warn") {
+    bannerEl.textContent = msg;
+    bannerEl.classList.add("visible");
+    bannerEl.dataset.kind = kind;
+  }
+  function hideBanner() {
+    bannerEl.classList.remove("visible");
+    bannerEl.textContent = "";
+  }
 
   // ---------- Audio capture ----------
   async function startMic() {
@@ -458,6 +530,7 @@
           encoding: "pcm_s16le",
           channels: 1,
           language_hint: langInput.value || "si",
+          enable_diarization: !!diarToggle.checked,
         }));
         resolve();
       };
@@ -496,6 +569,9 @@
       case "warning":
         setConn("warn", "Warning: " + msg.code);
         log(`WARNING ${msg.code}: ${msg.message}`, "warn");
+        if (msg.code === "DIARIZATION_UNAVAILABLE" || msg.code === "DIARIZATION_FAILED") {
+          showBanner(`${msg.code}: ${msg.message}`, "warn");
+        }
         break;
       case "error":
         setConn("err", "Error: " + msg.code);
@@ -521,8 +597,36 @@
 
   function renderFinal(msg) {
     const li = document.createElement("li");
-    li.innerHTML = `<div class="meta">u=${msg.utterance_id} · ${msg.start_ms}-${msg.end_ms} ms</div>`
-                 + escapeHtml(msg.text || "");
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `u=${msg.utterance_id} · ${msg.start_ms}-${msg.end_ms} ms`;
+    li.appendChild(meta);
+
+    if (Array.isArray(msg.turns) && msg.turns.length > 0) {
+      for (const turn of msg.turns) {
+        const row = document.createElement("div");
+        row.className = "turn";
+        const chip = document.createElement("span");
+        chip.className = "chip";
+        chip.textContent = turn.speaker_id;
+        chip.style.background = speakerColor(turn.speaker_id);
+        const txt = document.createElement("div");
+        txt.className = "turn-text";
+        txt.textContent = turn.text || "";
+        const tmeta = document.createElement("span");
+        tmeta.className = "turn-meta";
+        tmeta.textContent = `${turn.start_ms}-${turn.end_ms} ms`;
+        row.appendChild(chip);
+        row.appendChild(txt);
+        row.appendChild(tmeta);
+        li.appendChild(row);
+      }
+    } else {
+      const plain = document.createElement("div");
+      plain.textContent = msg.text || "";
+      li.appendChild(plain);
+    }
+
     finalsEl.prepend(li);
     partialEl.textContent = "";
     stableText = "";
@@ -540,6 +644,7 @@
     try {
       seq = 0; stableText = ""; lastPartial = "";
       partialEl.textContent = "";
+      hideBanner();
       btnState({streaming: true});
       startProgressLoop();
       await openSocket();

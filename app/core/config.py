@@ -112,6 +112,40 @@ class Settings(BaseSettings):
     min_audio_for_partial_seconds: float = 0.6
     """sliding_window mode: minimum buffered seconds before running a partial decode."""
 
+    # --- Speaker diarization (opt-in per session via start.enable_diarization) ---
+    diarization_enabled_capability: bool = Field(
+        default=True,
+        description=(
+            "Service-level kill switch. When False, all sessions get a "
+            "DIARIZATION_UNAVAILABLE warning if they ask for diarization."
+        ),
+    )
+    diarization_model_id: str = Field(
+        default="pyannote/speaker-diarization-community-1",
+        description="HF id of the pyannote speaker diarization pipeline.",
+    )
+    diarization_embedding_model_id: str = Field(
+        default="pyannote/wespeaker-voxceleb-resnet34-LM",
+        description="HF id of the speaker embedding model used to keep spk_N ids stable across segments.",
+    )
+    diarization_speaker_match_threshold: float = Field(
+        default=0.70,
+        ge=0.0,
+        le=1.0,
+        description="Cosine-similarity threshold for matching a turn embedding to an existing session speaker.",
+    )
+    diarization_min_turn_seconds: float = Field(
+        default=0.30,
+        description=(
+            "Skip the diarization pipeline on segments shorter than this; "
+            "fall back to a single speaker turn covering the whole segment."
+        ),
+    )
+    diarization_preload: bool = Field(
+        default=False,
+        description="If True, eager-load the diarization pipeline at app startup.",
+    )
+
     # --- Session lifecycle ---
     idle_timeout_seconds: int = 60
     """Reap a session if no audio_chunk arrives for this long."""

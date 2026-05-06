@@ -27,9 +27,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 Then open the test client in your browser:
 
-- Test page: http://localhost:8000/client
+- Test page: http://localhost:8000/client (now includes a **Speaker diarization** toggle — flips on per-session `enable_diarization` and renders speaker chips per turn)
 - Health (live): http://localhost:8000/health/live
-- Health (ready): http://localhost:8000/health/ready
+- Health (ready): http://localhost:8000/health/ready (reports `diarization.{capability,available,loaded}`)
 
 ## Project layout
 

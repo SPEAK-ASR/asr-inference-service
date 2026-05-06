@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 from app.asr.decoder import IncrementalDecoder
+from app.asr.diarization import SessionSpeakerRegistry
 from app.asr.streaming_engine import EngineBuffer
 from app.asr.vad import VadSegmenterState, reset_segment
 from app.core.config import Settings, get_settings
@@ -40,6 +41,9 @@ class SessionState:
     engine_buffer: EngineBuffer = field(init=False)
     decoder: IncrementalDecoder = field(default_factory=IncrementalDecoder)
     vad_segmenter: VadSegmenterState = field(default_factory=VadSegmenterState)
+
+    enable_diarization: bool = False
+    speaker_registry: SessionSpeakerRegistry = field(default_factory=SessionSpeakerRegistry)
 
     last_audio_seq: int = -1
     chunks_received: int = 0

@@ -58,7 +58,8 @@ Pydantic uses **`extra="forbid"`**. **Do not** add unknown keys (e.g. no `metada
   "sample_rate": 16000,
   "encoding": "pcm_s16le",
   "channels": 1,
-  "language_hint": "si"
+  "language_hint": "si",
+  "enable_diarization": false
 }
 ```
 
@@ -68,6 +69,7 @@ Rules enforced by the server:
 - **`encoding`** must be exactly **`"pcm_s16le"`** (validated on the schema; omitting defaults it for some clients — safer to send explicitly).
 - **`channels`** must be **`1`**.
 - **`language_hint`:** optional-ish; schema default **`"si"`**. Server uses **`start.language_hint` or fallback `settings.language_hint`**.
+- **`enable_diarization`:** optional **bool**, default **`false`**. When `true`, each `final_transcript` carries an extra `turns: [{speaker_id, start_ms, end_ms, text}, …]` array with stable per-session `spk_N` labels. If the server can't load the diarization model you receive a `warning` (`code = "DIARIZATION_UNAVAILABLE"`) and the rest of the session works without speaker labels.
 
 Success → **`{"type":"ack","session_id":"…","message":"stream_started"}`**.
 
@@ -144,11 +146,23 @@ Dispatch on **`type`**.
   "utterance_id": "uabc12ef",
   "text": "Final line.",
   "start_ms": 0,
-  "end_ms": 5100
+  "end_ms": 5100,
+  "turns": null
 }
 ```
 
 Use this to **commit** text in your transcript list and **clear** interim UI for that utterance.
+
+If you opened the session with **`enable_diarization: true`**, expect a populated **`turns`** array on each final:
+
+```json
+"turns": [
+  { "speaker_id": "spk_1", "start_ms": 0, "end_ms": 1800, "text": "hello" },
+  { "speaker_id": "spk_2", "start_ms": 1900, "end_ms": 5100, "text": "hi there" }
+]
+```
+
+`speaker_id` is **only stable inside one WebSocket session** (start a new socket → ids reset). Render it with a deterministic color per id and treat the legacy `text` field as a fallback for older code paths.
 
 ### `error`
 
@@ -159,6 +173,13 @@ Use this to **commit** text in your transcript list and **clear** interim UI for
 **Note:** Invalid JSON/schema often gets **`PROTOCOL_ERROR`** and the socket **may stay open** (`continue` loop). Fix the outgoing message shape.
 
 Idle timeout **`SESSION_TIMEOUT`**: server sends **`error`** then **`close(1001)`** (approximate timing — see SessionManager).
+
+### `warning`
+
+Non-terminal notices the client may want to surface in UI. Codes today:
+
+- **`DIARIZATION_UNAVAILABLE`** — diarization was requested but the server couldn't load the pipeline; the session continues without speaker labels.
+- **`DIARIZATION_FAILED`** — a single segment's diarization run errored; the server falls back to a plain `final_transcript` for that segment only.
 
 ### `session_summary`
 

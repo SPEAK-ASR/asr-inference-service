@@ -20,6 +20,10 @@ numpy>=1.26,<3
 # --- VAD (realtime segmentation; matches HF Space pattern) ---
 silero-vad>=6,<7
 
+# --- Speaker diarization (opt-in via start.enable_diarization) ---
+# Default model: pyannote/speaker-diarization-community-1 (no HF token required).
+pyannote.audio>=3.1,<4
+
 # --- Audio I/O ---
 soundfile>=0.12
 

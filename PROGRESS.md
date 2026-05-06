@@ -76,6 +76,19 @@ Once you run the steps in **How to Verify** below, Phase 1 graduates from
 - Per-segment confidence logging + optional fallback decode hook
 - Punctuation/casing post-processor (off by default)
 
+### Speaker diarization (Phase 2 add-on, opt-in per session)
+
+- New module `app/asr/diarization.py` wraps `pyannote/speaker-diarization-community-1`
+  (no HF token required) plus `pyannote/wespeaker-voxceleb-resnet34-LM` for
+  embedding-based session-stable `spk_N` ids.
+- Toggle is per-session via `start.enable_diarization: bool` (no server restart needed).
+- Each `final_transcript` carries an optional `turns: [{speaker_id, start_ms, end_ms, text}]`.
+  Whisper is invoked once per turn for accurate per-speaker text.
+- Demo client at `/client` now ships a "Speaker diarization" checkbox plus
+  color-coded speaker chips, and surfaces `DIARIZATION_UNAVAILABLE` /
+  `DIARIZATION_FAILED` warnings as a banner.
+- `/health/ready` exposes `diarization.{capability,available,loaded,model_id}`.
+
 ## Phase 3 — Performance and Scale (planned)
 
 - ASR worker pool with sticky session routing (`app/workers/asr_worker.py`)

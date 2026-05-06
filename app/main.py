@@ -51,6 +51,15 @@ async def lifespan(app: FastAPI):
     if settings.streaming_mode == "vad":
         preload_vad()
 
+    if settings.diarization_preload and settings.diarization_enabled_capability:
+        from app.asr.diarization import preload as preload_diarization
+
+        if not preload_diarization(settings):
+            log.warning(
+                "diarization_preload_failed",
+                extra={"model_id": settings.diarization_model_id},
+            )
+
     sessions = SessionManager(settings=settings)
     await sessions.start()
 
@@ -109,13 +118,24 @@ async def health_live() -> dict:
 async def health_ready() -> JSONResponse:
     asr = getattr(app.state, "asr", None)
     sessions = getattr(app.state, "sessions", None)
+    settings = get_settings()
     ready = asr is not None and sessions is not None
+
+    from app.asr.diarization import is_available as diarization_is_available
+    from app.asr.diarization import is_loaded as diarization_is_loaded
+
     payload = {
         "status": "ready" if ready else "not_ready",
         "backend": asr.backend if asr else None,
         "model_id": asr.model_id if asr else None,
         "device": asr.device if asr else None,
         "active_sessions": sessions.active_count() if sessions else 0,
+        "diarization": {
+            "capability": settings.diarization_enabled_capability,
+            "available": diarization_is_available(settings),
+            "loaded": diarization_is_loaded(),
+            "model_id": settings.diarization_model_id,
+        },
     }
     return JSONResponse(content=payload, status_code=200 if ready else 503)
 

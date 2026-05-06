@@ -42,12 +42,14 @@ Opens the session.
   "sample_rate": 16000,
   "encoding": "pcm_s16le",
   "channels": 1,
-  "language_hint": "si"
+  "language_hint": "si",
+  "enable_diarization": false
 }
 ```
 
 - **`sample_rate`:** Must match **`ASR_TARGET_SAMPLE_RATE`** on the server (default **16000**), or you receive **`INVALID_AUDIO_FORMAT`**.
 - **`language_hint`:** Optional override; Whisper language code string (often `"si"` for Sinhala). Server defaults come from **`ASR_LANGUAGE_HINT`** when omitted/overridden depending on validation.
+- **`enable_diarization`:** Optional **bool**, default **`false`**. When `true`, each `final_transcript` carries a `turns` array with stable per-session `spk_N` ids. If the server can't load the diarization model, you receive a `warning` with code `DIARIZATION_UNAVAILABLE` and the session continues without speaker labels.
 
 ### 2. `audio_chunk` (streaming)
 
@@ -131,11 +133,31 @@ After **`end_utterance`** or **`stop`** (and after a successful final decode):
   "utterance_id": "uxxxxxxxx",
   "text": " … ",
   "start_ms": 0,
-  "end_ms": 5000
+  "end_ms": 5000,
+  "turns": null
 }
 ```
 
 Then the server rotates **`utterance_id`** for subsequent speech unless the connection ends.
+
+**Diarization (`turns`):** When the session was opened with `enable_diarization: true`, `turns` is a non-empty array of speaker-attributed slices. The legacy `text` field stays populated (for older clients) and is built as `\n`-joined `spk_N: <text>` lines.
+
+```json
+{
+  "type": "final_transcript",
+  "session_id": "…",
+  "utterance_id": "uxxxxxxxx",
+  "text": "spk_1: hello\nspk_2: hi there",
+  "start_ms": 0,
+  "end_ms": 5000,
+  "turns": [
+    { "speaker_id": "spk_1", "start_ms": 0, "end_ms": 1800, "text": "hello" },
+    { "speaker_id": "spk_2", "start_ms": 1900, "end_ms": 5000, "text": "hi there" }
+  ]
+}
+```
+
+Speaker ids are **session-scoped only** (a `spk_2` from one socket has no relationship to `spk_2` from another). Within one session, the same physical speaker keeps the same id across utterances via embedding-centroid matching.
 
 ### `error`
 
@@ -146,6 +168,19 @@ Protocol or runtime problems:
 ```
 
 Common **`code`** values: **`PROTOCOL_ERROR`**, **`INVALID_AUDIO_FORMAT`**, **`PAYLOAD_TOO_LARGE`**, **`SESSION_TIMEOUT`**, **`INTERNAL_ERROR`**.
+
+### `warning`
+
+Recoverable, non-terminal notices. The session continues.
+
+```json
+{ "type": "warning", "code": "DIARIZATION_UNAVAILABLE", "message": "…" }
+```
+
+Codes currently emitted:
+
+- **`DIARIZATION_UNAVAILABLE`** — sent right after `start` when the client asked for diarization but the server couldn't load the pipeline. Subsequent `final_transcript` messages will not have a `turns` field.
+- **`DIARIZATION_FAILED`** — sent if a single segment's diarization run errored at runtime. The server falls back to a plain `final_transcript` for that segment only.
 
 ### `session_summary`
 

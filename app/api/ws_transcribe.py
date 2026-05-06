@@ -28,6 +28,7 @@ import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import TypeAdapter, ValidationError
 
+from app.asr.diarization import diarize_segment, get_diarizer, get_embedder
 from app.asr.streaming_engine import StreamingEngine
 from app.asr.vad import flush_segment, get_vad_model, process_stream_chunk
 from app.core.config import get_settings
@@ -44,8 +45,11 @@ from app.sessions.schemas import (
     PartialTranscript,
     PingMsg,
     SessionSummary,
+    SpeakerTurn,
     StartMsg,
     StopMsg,
+    Warning as WsWarning,
+    WarningCode,
 )
 
 log = get_logger(__name__)
@@ -136,6 +140,10 @@ async def ws_transcribe(ws: WebSocket) -> None:
             sample_rate=first.sample_rate,
             language_hint=first.language_hint or settings.language_hint,
         )
+        state.speaker_registry.match_threshold = settings.diarization_speaker_match_threshold
+
+        if first.enable_diarization:
+            state.enable_diarization = await _ensure_diarization_ready(ws, state, settings)
 
         async def close_cb(reason: str) -> None:
             nonlocal close_reason
@@ -228,6 +236,58 @@ async def ws_transcribe(ws: WebSocket) -> None:
 # Handlers
 # ---------------------------------------------------------------------------
 
+async def _ensure_diarization_ready(
+    ws: WebSocket,
+    state: SessionState,
+    settings: Any,
+) -> bool:
+    """Probe diarization availability for this session. Sends a warning and
+    returns ``False`` if the requested feature isn't usable on this server."""
+    if not settings.diarization_enabled_capability:
+        await _send_json(
+            ws,
+            WsWarning(
+                code=WarningCode.DIARIZATION_UNAVAILABLE,
+                message="Diarization is disabled on this server.",
+            ),
+        )
+        log.info(
+            "diarization_capability_disabled",
+            extra={"session_id": state.session_id},
+        )
+        return False
+
+    loop = asyncio.get_running_loop()
+    pipeline = await loop.run_in_executor(None, get_diarizer, settings)
+    embedder = await loop.run_in_executor(None, get_embedder, settings)
+    if pipeline is None or embedder is None:
+        await _send_json(
+            ws,
+            WsWarning(
+                code=WarningCode.DIARIZATION_UNAVAILABLE,
+                message=(
+                    "Diarization model could not be loaded; continuing without "
+                    "speaker labels."
+                ),
+            ),
+        )
+        log.warning(
+            "diarization_unavailable",
+            extra={
+                "session_id": state.session_id,
+                "pipeline_loaded": pipeline is not None,
+                "embedder_loaded": embedder is not None,
+            },
+        )
+        return False
+
+    log.info(
+        "diarization_enabled_for_session",
+        extra={"session_id": state.session_id},
+    )
+    return True
+
+
 async def _emit_final_for_segment(
     ws: WebSocket,
     engine: StreamingEngine,
@@ -235,6 +295,23 @@ async def _emit_final_for_segment(
     segment_audio: np.ndarray,
 ) -> None:
     """Run full decode on a VAD segment and send ``final_transcript``."""
+    if state.enable_diarization:
+        try:
+            await _emit_diarized_final_for_segment(ws, engine, state, segment_audio)
+            return
+        except Exception:  # noqa: BLE001
+            log.exception(
+                "diarized_emit_failed_falling_back",
+                extra={"session_id": state.session_id},
+            )
+            await _send_json(
+                ws,
+                WsWarning(
+                    code=WarningCode.DIARIZATION_FAILED,
+                    message="Diarization failed for this segment; emitting plain final.",
+                ),
+            )
+
     try:
         text, decode_seconds = await engine.transcribe_audio_array(
             segment_audio,
@@ -271,6 +348,141 @@ async def _emit_final_for_segment(
             "utterance_id": utterance_id,
             "decode_ms": int(decode_seconds * 1000),
             "text_len": len(final_text),
+        },
+    )
+
+    state.utterances_finalized += 1
+    state.new_utterance()
+
+
+async def _emit_diarized_final_for_segment(
+    ws: WebSocket,
+    engine: StreamingEngine,
+    state: SessionState,
+    segment_audio: np.ndarray,
+) -> None:
+    """Run diarization + per-turn Whisper decode and emit a turns-aware final.
+
+    Raises on any internal failure so the caller can fall back to the plain
+    single-decode path.
+    """
+    settings = get_settings()
+    sample_rate = state.sample_rate
+    segment_duration_ms = int(len(segment_audio) / float(sample_rate) * 1000)
+    end_ms = state.duration_ms()
+    start_ms = max(0, end_ms - segment_duration_ms)
+    utterance_id = state.utterance_id
+
+    raw_turns = await diarize_segment(
+        segment_audio,
+        sample_rate,
+        state.speaker_registry,
+        settings,
+    )
+
+    if not raw_turns:
+        text, decode_seconds = await engine.transcribe_audio_array(
+            segment_audio,
+            language_hint=state.language_hint,
+        )
+        final_text = state.decoder.finalize(text)
+        await _send_json(
+            ws,
+            FinalTranscript(
+                session_id=state.session_id,
+                utterance_id=utterance_id,
+                text=final_text,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                turns=[
+                    SpeakerTurn(
+                        speaker_id="spk_1",
+                        start_ms=start_ms,
+                        end_ms=end_ms,
+                        text=final_text,
+                    )
+                ] if final_text else None,
+            ),
+        )
+        log.info(
+            "final_emitted_diarized_empty_turns",
+            extra={
+                "session_id": state.session_id,
+                "utterance_id": utterance_id,
+                "decode_ms": int(decode_seconds * 1000),
+                "text_len": len(final_text),
+            },
+        )
+        state.utterances_finalized += 1
+        state.new_utterance()
+        return
+
+    turns: list[SpeakerTurn] = []
+    total_decode_seconds = 0.0
+    for turn in raw_turns:
+        s_idx = max(0, int(turn.start_ms / 1000.0 * sample_rate))
+        e_idx = min(len(segment_audio), int(turn.end_ms / 1000.0 * sample_rate))
+        if e_idx <= s_idx:
+            continue
+        turn_audio = segment_audio[s_idx:e_idx]
+        try:
+            turn_text, decode_seconds = await engine.transcribe_audio_array(
+                turn_audio,
+                language_hint=state.language_hint,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception(
+                "turn_decode_failed",
+                extra={
+                    "session_id": state.session_id,
+                    "speaker_id": turn.speaker_id,
+                    "turn_ms": [turn.start_ms, turn.end_ms],
+                },
+            )
+            turn_text = ""
+            decode_seconds = 0.0
+
+        total_decode_seconds += decode_seconds
+        turn_text = (turn_text or "").strip()
+        if not turn_text:
+            continue
+        turns.append(
+            SpeakerTurn(
+                speaker_id=turn.speaker_id,
+                start_ms=start_ms + turn.start_ms,
+                end_ms=start_ms + turn.end_ms,
+                text=turn_text,
+            )
+        )
+
+    if not turns:
+        # Diarization succeeded structurally but every per-turn decode came back
+        # empty. Treat as silence and rotate the utterance without emitting.
+        state.new_utterance()
+        return
+
+    combined = "\n".join(f"{t.speaker_id}: {t.text}" for t in turns)
+    final_text = state.decoder.finalize(combined)
+
+    await _send_json(
+        ws,
+        FinalTranscript(
+            session_id=state.session_id,
+            utterance_id=utterance_id,
+            text=final_text,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            turns=turns,
+        ),
+    )
+    log.info(
+        "final_emitted_diarized",
+        extra={
+            "session_id": state.session_id,
+            "utterance_id": utterance_id,
+            "decode_ms": int(total_decode_seconds * 1000),
+            "turns": len(turns),
+            "speakers_seen": len(state.speaker_registry.centroids),
         },
     )
 
