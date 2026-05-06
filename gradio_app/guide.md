@@ -13,15 +13,16 @@ Python 3.9+ and a working microphone. GPU is optional but speeds up inference.
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
 
-# 2) Install Gradio demo dependencies
+# 2a) CPU install (default)
 pip install -r gradio_app/requirements.txt
 
-# 3) (Optional) For CUDA inference, install the matching torch wheel first.
-#    Check your CUDA version with: nvidia-smi
-#    Then pick the right wheel from https://pytorch.org/get-started/locally/
-#    Example for CUDA 12.1:
-#    pip install --index-url https://download.pytorch.org/whl/cu121 torch torchaudio
-#    pip install -r gradio_app/requirements.txt
+# 2b) GPU / CUDA install — install the CUDA-enabled torch wheels FIRST,
+#     then install the remaining dependencies without overwriting them.
+#     Check your CUDA version with: nvidia-smi
+#     Pick the right wheel URL from https://pytorch.org/get-started/locally/
+#     Example for CUDA 12.1:
+#     pip install --index-url https://download.pytorch.org/whl/cu121 torch torchaudio
+#     pip install gradio transformers peft numpy silero-vad
 ```
 
 ## Running
