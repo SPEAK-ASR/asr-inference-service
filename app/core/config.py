@@ -185,10 +185,10 @@ class Settings(BaseSettings):
     log_level: Literal["debug", "info", "warning", "error"] = "info"
 
     # --- Limits ---
-    max_chunk_bytes: int = 256 * 1024
+    max_chunk_bytes: int = 1024 * 1024
     """Reject incoming audio_chunk bigger than this (post-base64-decode)."""
 
-    http_transcribe_max_upload_bytes: int = 10 * 1024 * 1024
+    http_transcribe_max_upload_bytes: int = 50 * 1024 * 1024
     """Reject HTTP-uploaded files larger than this many bytes."""
 
     http_transcribe_allowed_mime_types: list[str] = Field(
