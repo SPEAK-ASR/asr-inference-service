@@ -63,7 +63,7 @@ class EngineBuffer:
 
 
 class StreamingEngine:
-    """Wraps a `LoadedASR` and exposes async transcribe-window calls."""
+    """Wraps a `LoadedASR` (transformers or faster-whisper) and exposes async calls."""
 
     def __init__(self, asr: LoadedASR, settings: Settings | None = None) -> None:
         self.asr = asr
@@ -144,23 +144,41 @@ class StreamingEngine:
         decode_seconds = time.perf_counter() - t0
         return (text or "").strip(), decode_seconds
 
+    async def transcribe_audio_array(
+        self,
+        audio: np.ndarray,
+        *,
+        language_hint: str | None,
+    ) -> tuple[str, float]:
+        """Decode a standalone float32 mono segment (e.g. VAD output)."""
+        if audio.size == 0:
+            return "", 0.0
+
+        audio_arr = np.ascontiguousarray(audio, dtype=np.float32)
+        generate_kwargs: dict[str, Any] = {"task": self.settings.task}
+        if language_hint:
+            generate_kwargs["language"] = language_hint
+
+        loop = asyncio.get_running_loop()
+        t0 = time.perf_counter()
+        async with self._lock:
+            text = await loop.run_in_executor(
+                None,
+                self._run_pipeline_sync,
+                audio_arr,
+                generate_kwargs,
+            )
+        decode_seconds = time.perf_counter() - t0
+        return (text or "").strip(), decode_seconds
+
     def _run_pipeline_sync(
         self,
         audio: np.ndarray,
         generate_kwargs: dict[str, Any],
     ) -> str:
-        """Blocking call into the HF pipeline; runs in the default executor."""
-        try:
-            result = self.asr.pipe(
-                {"array": audio, "sampling_rate": self.sample_rate},
-                generate_kwargs=generate_kwargs,
-            )
-        except TypeError:
-            result = self.asr.pipe(
-                {"array": audio, "sampling_rate": self.sample_rate}
-            )
-        if isinstance(result, dict):
-            return result.get("text", "") or ""
-        if isinstance(result, list) and result and isinstance(result[0], dict):
-            return result[0].get("text", "") or ""
-        return str(result or "")
+        """Blocking inference; runs in the default executor."""
+        return self.asr.transcribe_sync(
+            audio,
+            self.sample_rate,
+            generate_kwargs,
+        )

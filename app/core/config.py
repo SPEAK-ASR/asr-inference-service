@@ -3,9 +3,19 @@
 All tunables for the ASR backend live here. Values are loaded from environment
 variables (with `ASR_` prefix) and an optional `.env` file at the project root.
 
-Examples (PowerShell):
+Examples (PowerShell) — Hugging Face Transformers, PEFT adapter (auto-detect):
+    $env:ASR_BACKEND = "transformers"
+    $env:ASR_TRANSFORMERS_LOAD_MODE = "auto"
     $env:ASR_MODEL_ID = "SPEAK-ASR/whisper-si-exp-10-medium-all"
-    $env:ASR_DEVICE   = "auto"  # auto | cuda | cpu
+
+Examples — merged / full single checkpoint (no adapter path):
+    $env:ASR_TRANSFORMERS_LOAD_MODE = "full"
+    $env:ASR_MODEL_ID = "your-org/merged-whisper-si"
+
+Examples — faster-whisper (CTranslate2 checkpoint on Hugging Face):
+    $env:ASR_BACKEND = "faster_whisper"
+    $env:ASR_MODEL_ID = "irudachirath/faster-whisper-medium-si-exp10-fp16"
+    $env:ASR_FASTER_WHISPER_CUDA_COMPUTE_TYPE = "float16"
 """
 
 from __future__ import annotations
@@ -28,12 +38,41 @@ class Settings(BaseSettings):
     )
 
     # --- Model ---
+    backend: Literal["transformers", "faster_whisper"] = Field(
+        default="transformers",
+        description="transformers = HF AutoModel/pipeline (incl. PEFT adapters); faster_whisper = CTranslate2 (e.g. model.bin on HF).",
+    )
     model_id: str = Field(
         default="SPEAK-ASR/whisper-si-exp-10-medium-all",
-        description="Hugging Face model id for the primary ASR path.",
+        description="Model id or path: HF repo for transformers or faster-whisper CTranslate2 export.",
+    )
+    transformers_load_mode: Literal["auto", "full"] = Field(
+        default="auto",
+        description=(
+            "transformers backend only. auto = detect PEFT adapter from config; "
+            "full = load model_id as one merged/full checkpoint (skip adapter path)."
+        ),
     )
     language_hint: str = Field(default="si", description="Whisper language hint, e.g. 'si' for Sinhala.")
     task: Literal["transcribe", "translate"] = "transcribe"
+
+    merge_peft_adapter: bool = Field(
+        default=True,
+        description=(
+            "transformers + PEFT adapter path only: merge LoRA into base weights "
+            "before inference (same as the reference Gradio Space)."
+        ),
+    )
+
+    # --- faster-whisper (CTranslate2) only; ignored when backend=transformers ---
+    faster_whisper_cuda_compute_type: str = Field(
+        default="float16",
+        description="CTranslate2 compute_type on GPU (e.g. float16, int8_float16).",
+    )
+    faster_whisper_cpu_compute_type: str = Field(
+        default="int8",
+        description="CTranslate2 compute_type on CPU (e.g. int8, float32).",
+    )
 
     # --- Device / precision ---
     device: Literal["auto", "cuda", "cpu"] = "auto"
@@ -44,17 +83,34 @@ class Settings(BaseSettings):
     target_sample_rate: int = 16_000
     """Internal sample rate the engine operates on. Inputs are validated/converted to this."""
 
+    streaming_mode: Literal["vad", "sliding_window"] = Field(
+        default="vad",
+        description=(
+            "vad = Silero VAD + silence-triggered segments (HF Space style); "
+            "sliding_window = periodic partial decode over a trailing window."
+        ),
+    )
+
     partial_interval_ms: int = 500
-    """How often the gateway flushes a partial decode while audio is flowing."""
+    """How often the gateway flushes a partial decode (sliding_window mode only)."""
 
     max_buffer_seconds: float = 30.0
-    """Hard cap on the per-session sliding audio buffer length."""
+    """Hard cap on buffered audio (VAD segment cap; sliding window trim)."""
+
+    silence_trigger_seconds: float = 1.0
+    """VAD mode: seconds of silence after speech before a segment is finalized."""
+
+    vad_threshold: float = 0.5
+    """Silero VAD confidence threshold (0–1, higher = stricter)."""
+
+    min_speech_seconds: float = 0.5
+    """VAD mode: ignore segments shorter than this (noise blips)."""
 
     decode_window_seconds: float = 6.0
     """Length of the trailing audio window fed to Whisper per partial decode."""
 
     min_audio_for_partial_seconds: float = 0.6
-    """Don't run inference until at least this much audio is buffered."""
+    """sliding_window mode: minimum buffered seconds before running a partial decode."""
 
     # --- Session lifecycle ---
     idle_timeout_seconds: int = 60

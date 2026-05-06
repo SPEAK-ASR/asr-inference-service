@@ -41,9 +41,23 @@ app/
   asr/{model_loader,streaming_engine,decoder}.py
   sessions/{manager,schemas}.py
   workers/                # (Phase 3)
+gradio_app/
+  app.py                  # standalone Gradio mic demo (Whisper + optional diarization)
+  requirements.txt        # deps for the Gradio app (separate from this file)
 tests/
   manual/client.html      # Mic + WebSocket test client
 ```
+
+### Gradio demo (optional)
+
+Browser UI for the same Sinhala Whisper+LoRA stack with optional diarization and noise removal:
+
+```bash
+pip install -r gradio_app/requirements.txt
+python gradio_app/app.py
+```
+
+Details: [gradio_app/guide.md](gradio_app/guide.md).
 
 ## Phase status
 

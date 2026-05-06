@@ -1,12 +1,20 @@
 """WebSocket gateway for `/ws/transcribe`.
 
-Handles the protocol from section 6 of `investigated_detail.md`:
-client sends ``start``, then ``audio_chunk`` repeatedly, optionally
-``end_utterance`` to finalize, ``ping`` for heartbeats, ``stop`` to close.
+Contract for mobile/other clients: ``docs/websocket-protocol.md`` and
+``docs/flutter-websocket-guide.md``.
+Summary: text JSON only; PCM16 mono at ``ASR_TARGET_SAMPLE_RATE`` (default 16 kHz)
+inside ``audio_chunk.audio_b64`` (Base64).
 
-The route owns one background task per session that flushes partial
-transcripts on a fixed interval. Final decodes happen inline on
-``end_utterance`` / ``stop``.
+Flow: ``start`` (first message), then repeated ``audio_chunk``, optional ``end_utterance``,
+``ping``, ``stop``. Partial/final hypotheses use ``partial_transcript`` /
+``final_transcript`` (not a single ``isFinal`` flag).
+
+Investigated-detail background: section 6 of ``investigated_detail.md``.
+
+The route may run a background partial flush (``sliding_window`` mode) or use
+Silero VAD + silence-triggered segments (``vad`` mode, default). Final decodes
+run when a VAD segment completes, or on ``end_utterance`` / ``stop``, or after
+each partial interval in sliding-window mode.
 """
 
 from __future__ import annotations
@@ -16,10 +24,12 @@ import base64
 import time
 from typing import Any
 
+import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import TypeAdapter, ValidationError
 
 from app.asr.streaming_engine import StreamingEngine
+from app.asr.vad import flush_segment, get_vad_model, process_stream_chunk
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.sessions.manager import SessionManager, SessionState
@@ -151,9 +161,10 @@ async def ws_transcribe(ws: WebSocket) -> None:
             Ack(session_id=state.session_id, message="stream_started"),
         )
 
-        partial_task = asyncio.create_task(
-            _partial_flush_loop(ws, engine, state, settings.partial_interval_ms)
-        )
+        if settings.streaming_mode == "sliding_window":
+            partial_task = asyncio.create_task(
+                _partial_flush_loop(ws, engine, state, settings.partial_interval_ms)
+            )
 
         while True:
             msg = await _recv_validated(ws)
@@ -217,6 +228,56 @@ async def ws_transcribe(ws: WebSocket) -> None:
 # Handlers
 # ---------------------------------------------------------------------------
 
+async def _emit_final_for_segment(
+    ws: WebSocket,
+    engine: StreamingEngine,
+    state: SessionState,
+    segment_audio: np.ndarray,
+) -> None:
+    """Run full decode on a VAD segment and send ``final_transcript``."""
+    try:
+        text, decode_seconds = await engine.transcribe_audio_array(
+            segment_audio,
+            language_hint=state.language_hint,
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("final_decode_failed", extra={"session_id": state.session_id})
+        await _send_json(
+            ws,
+            Error(code=ErrorCode.INTERNAL_ERROR, message="Final decode failed."),
+        )
+        return
+
+    final_text = state.decoder.finalize(text)
+    end_ms = state.duration_ms()
+    sample_rate = state.sample_rate
+    start_ms = max(0, end_ms - int(len(segment_audio) / float(sample_rate) * 1000))
+    utterance_id = state.utterance_id
+
+    await _send_json(
+        ws,
+        FinalTranscript(
+            session_id=state.session_id,
+            utterance_id=utterance_id,
+            text=final_text,
+            start_ms=start_ms,
+            end_ms=end_ms,
+        ),
+    )
+    log.info(
+        "final_emitted",
+        extra={
+            "session_id": state.session_id,
+            "utterance_id": utterance_id,
+            "decode_ms": int(decode_seconds * 1000),
+            "text_len": len(final_text),
+        },
+    )
+
+    state.utterances_finalized += 1
+    state.new_utterance()
+
+
 async def _handle_audio_chunk(
     ws: WebSocket,
     engine: StreamingEngine,
@@ -247,8 +308,24 @@ async def _handle_audio_chunk(
     if samples.size == 0:
         return
 
-    state.engine_buffer.append(samples)
-    state.engine_buffer.trim_to(settings.max_buffer_seconds)
+    if settings.streaming_mode == "vad":
+        vad = get_vad_model()
+        segment = process_stream_chunk(
+            samples,
+            state.vad_segmenter,
+            vad,
+            sample_rate=settings.target_sample_rate,
+            silence_trigger_sec=settings.silence_trigger_seconds,
+            max_buffer_sec=settings.max_buffer_seconds,
+            min_speech_sec=settings.min_speech_seconds,
+            vad_threshold=settings.vad_threshold,
+        )
+        if segment is not None and segment.size > 0:
+            await _emit_final_for_segment(ws, engine, state, segment)
+    else:
+        state.engine_buffer.append(samples)
+        state.engine_buffer.trim_to(settings.max_buffer_seconds)
+
     state.last_audio_seq = msg.seq
     state.chunks_received += 1
     state.bytes_received += len(pcm)
@@ -321,6 +398,20 @@ async def _finalize_utterance(
     engine: StreamingEngine,
     state: SessionState,
 ) -> None:
+    settings = get_settings()
+    if settings.streaming_mode == "vad":
+        segment = flush_segment(
+            state.vad_segmenter,
+            sample_rate=settings.target_sample_rate,
+            min_speech_sec=settings.min_speech_seconds,
+            force=True,
+        )
+        if segment is not None and segment.size > 0:
+            await _emit_final_for_segment(ws, engine, state, segment)
+        else:
+            state.new_utterance()
+        return
+
     if state.engine_buffer.samples.size == 0:
         state.new_utterance()
         return
