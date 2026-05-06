@@ -1,8 +1,8 @@
 # Realtime ASR Backend (Sinhala-First)
 
 FastAPI backend that streams live audio from a client over WebSocket and returns
-near real-time partial and final transcripts using a Hugging Face Whisper model
-fine-tuned for Sinhala (`SPEAK-ASR/whisper-si-exp-10-medium-all`).
+near real-time partial and final transcripts using a Whisper stack tuned for
+Sinhala (default adapter: `SPEAK-ASR/whisper-si-exp-10-medium-all`).
 
 > Detailed design: [investigated_detail.md](investigated_detail.md)
 > Live progress: [PROGRESS.md](PROGRESS.md)
@@ -21,7 +21,7 @@ pip install -r requirements.txt
 #    pip install --index-url https://download.pytorch.org/whl/cu121 torch
 #    pip install -r requirements.txt
 
-# 3) Run the dev server
+# 3) Set how you load the model (see "Model loading" below), then run:
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -31,6 +31,80 @@ Then open the test client in your browser:
 - Health (live): http://localhost:8000/health/live
 - Health (ready): http://localhost:8000/health/ready (reports `diarization.{capability,available,loaded}`)
 
+## Model loading
+
+The service supports **three** ways to load a model. Choose one with
+`ASR_MODEL_KIND` (or copy a template from `config/` — see the end of this section).
+
+All settings use the `ASR_` prefix. You can set them in the shell for a single
+run or put them in a `.env` file at the project root.
+
+### 1) PEFT adapter + base model (`ASR_MODEL_KIND=peft`)
+
+Use this when `ASR_MODEL_ID` is a Hugging Face **LoRA/PEFT adapter** repo. The
+base Whisper checkpoint is read from the adapter’s `adapter_config.json`
+(`base_model_name_or_path`), unless you override it.
+
+```powershell
+$env:ASR_MODEL_KIND = "peft"
+$env:ASR_MODEL_ID = "SPEAK-ASR/whisper-si-exp-10-medium-all"
+# Optional explicit base if auto-detection is wrong or you want a pin:
+# $env:ASR_BASE_MODEL_ID = "openai/whisper-medium"
+# Merge LoRA into base before inference (default true; matches typical Space setup):
+# $env:ASR_MERGE_PEFT_ADAPTER = "true"
+$env:ASR_DEVICE = "auto"
+$env:ASR_CUDA_DTYPE = "float16"
+
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### 2) Single merged / full checkpoint (`ASR_MODEL_KIND=merged`)
+
+Use this when `ASR_MODEL_ID` is **one** Hugging Face repo with full weights
+(merged fine-tune or native full model), not a LoRA-only adapter.
+
+```powershell
+$env:ASR_MODEL_KIND = "merged"
+$env:ASR_MODEL_ID = "your-org/your-merged-whisper-medium-si"
+$env:ASR_DEVICE = "auto"
+$env:ASR_CUDA_DTYPE = "float16"
+
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### 3) Faster Whisper / CTranslate2 (`ASR_MODEL_KIND=faster_whisper`)
+
+Use this when `ASR_MODEL_ID` is a **CTranslate2** export (e.g. `model.bin` on
+Hugging Face).
+
+```powershell
+$env:ASR_MODEL_KIND = "faster_whisper"
+$env:ASR_MODEL_ID = "irudachirath/faster-whisper-medium-si-exp10-fp16"
+$env:ASR_DEVICE = "auto"
+$env:ASR_FASTER_WHISPER_CUDA_COMPUTE_TYPE = "float16"
+$env:ASR_FASTER_WHISPER_CPU_COMPUTE_TYPE = "int8"
+# Optional: beam size (1 = greedy; good for streaming latency)
+# $env:ASR_FASTER_WHISPER_BEAM_SIZE = "1"
+
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### Example `.env` files
+
+Ready-made templates (copy to `.env` or merge into yours):
+
+| Mode | Template |
+|------|-----------|
+| PEFT adapter | [config/transformers-adapter.env.example](config/transformers-adapter.env.example) |
+| Merged / full HF | [config/transformers-merged-full.env.example](config/transformers-merged-full.env.example) |
+| faster-whisper | [config/faster-whisper-ct2.env.example](config/faster-whisper-ct2.env.example) |
+
+### Legacy env vars
+
+If you still use `ASR_BACKEND` and `ASR_TRANSFORMERS_LOAD_MODE` without
+`ASR_MODEL_KIND`, the app maps them to the new `model_kind` the same way as
+before (`faster_whisper` vs `transformers` + `full` → merged).
+
 ## Project layout
 
 ```
@@ -38,26 +112,13 @@ app/
   main.py                 # FastAPI entrypoint
   api/ws_transcribe.py    # WebSocket gateway
   core/{config,logging}.py
-  asr/{model_loader,streaming_engine,decoder}.py
+  asr/{model_loader,streaming_engine,decoder,vad}.py
   sessions/{manager,schemas}.py
-  workers/                # (Phase 3)
-gradio_app/
-  app.py                  # standalone Gradio mic demo (Whisper + optional diarization)
-  requirements.txt        # deps for the Gradio app (separate from this file)
+config/
+  *.env.example           # Copy to project root `.env` if you like
 tests/
   manual/client.html      # Mic + WebSocket test client
 ```
-
-### Gradio demo (optional)
-
-Browser UI for the same Sinhala Whisper+LoRA stack with optional diarization and noise removal:
-
-```bash
-pip install -r gradio_app/requirements.txt
-python gradio_app/app.py
-```
-
-Details: [gradio_app/guide.md](gradio_app/guide.md).
 
 ## Phase status
 
