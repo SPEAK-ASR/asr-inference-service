@@ -48,7 +48,7 @@ async def transcribe_uploaded_audio(
     except Exception as exc:  # noqa: BLE001
         log.warning(
             "http_transcribe_audio_decode_failed",
-            extra={"content_type": audio_file.content_type, "filename": audio_file.filename, "error": str(exc)},
+            extra={"content_type": audio_file.content_type, "upload_filename": audio_file.filename, "error": str(exc)},
         )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or corrupt audio payload.") from exc
 
@@ -70,7 +70,11 @@ async def transcribe_uploaded_audio(
     except Exception as exc:  # noqa: BLE001
         log.exception(
             "http_transcribe_failed",
-            extra={"filename": audio_file.filename, "content_type": audio_file.content_type, "payload_size": len(payload)},
+            extra={
+                "upload_filename": audio_file.filename,
+                "content_type": audio_file.content_type,
+                "payload_size": len(payload),
+            },
         )
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Transcription failed.") from exc
 
@@ -79,7 +83,7 @@ async def transcribe_uploaded_audio(
     log.info(
         "http_transcribe_success",
         extra={
-            "filename": audio_file.filename,
+            "upload_filename": audio_file.filename,
             "content_type": audio_file.content_type,
             "payload_size": len(payload),
             "duration_ms": duration_ms,
