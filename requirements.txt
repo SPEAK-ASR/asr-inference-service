@@ -1,6 +1,7 @@
 # --- Web framework ---
 fastapi>=0.115,<0.118
 uvicorn[standard]>=0.30,<0.33
+python-multipart>=0.0.9
 
 # --- Validation / config ---
 pydantic>=2.7,<3
@@ -25,3 +26,4 @@ soundfile>=0.12
 
 # --- Misc ---
 typing-extensions>=4.10
+pytest>=8,<9

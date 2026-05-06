@@ -7,6 +7,7 @@ Endpoints:
     GET  /                 -> root summary
     GET  /health/live      -> liveness (process up)
     GET  /health/ready     -> readiness (model loaded, device available)
+    POST /api/transcribe   -> upload recorded audio and get transcript
     WS   /ws/transcribe    -> realtime transcription
     GET  /client           -> manual mic test page (tests/manual/client.html)
 """
@@ -20,6 +21,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.http_transcribe import router as http_transcribe_router
 from app.api.ws_transcribe import router as ws_router
 from app.asr.model_loader import load_asr
 from app.asr.streaming_engine import StreamingEngine
@@ -98,6 +100,7 @@ async def root() -> dict:
         "backend": settings.backend,
         "model": settings.model_id,
         "ws_endpoint": "/ws/transcribe",
+        "http_transcribe_endpoint": "/api/transcribe",
         "test_client": "/client",
     }
 
@@ -125,6 +128,7 @@ async def health_ready() -> JSONResponse:
 
 
 app.include_router(ws_router)
+app.include_router(http_transcribe_router)
 
 
 # ---------------------------------------------------------------------------
