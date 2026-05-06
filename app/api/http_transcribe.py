@@ -42,17 +42,24 @@ def _build_upload_log_context(
     file: UploadFile,
     payload_size: int,
     language_hint: str | None,
-) -> dict[str, str | int | None]:
+) -> dict[str, str | int | float | None]:
+    payload_size_mb = round(payload_size / (1024 * 1024), 3)
     return {
         "upload_filename": file.filename,
         "file_extension": Path(file.filename or "").suffix.lower() or None,
         "content_type": file.content_type,
         "payload_size_bytes": payload_size,
+        "payload_size_mb": payload_size_mb,
         "language_hint": language_hint,
     }
 
 
-def _validate_upload(file: UploadFile, payload_size: int, settings: Settings, log_context: dict[str, str | int | None]) -> None:
+def _validate_upload(
+    file: UploadFile,
+    payload_size: int,
+    settings: Settings,
+    log_context: dict[str, str | int | float | None],
+) -> None:
     if payload_size == 0:
         log.warning(
             "http_transcribe_upload_rejected",
@@ -60,7 +67,11 @@ def _validate_upload(file: UploadFile, payload_size: int, settings: Settings, lo
         )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded audio is empty.")
     if payload_size > settings.http_transcribe_max_upload_bytes:
-        message = f"Audio exceeds {settings.http_transcribe_max_upload_bytes} bytes."
+        limit_mb = round(settings.http_transcribe_max_upload_bytes / (1024 * 1024), 3)
+        message = (
+            f"Audio exceeds {settings.http_transcribe_max_upload_bytes} bytes "
+            f"({limit_mb} MB)."
+        )
         log.warning(
             "http_transcribe_upload_rejected",
             extra={**log_context, "status": "error", "error_type": "payload_too_large", "error_message": message},
