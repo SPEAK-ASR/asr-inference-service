@@ -15,9 +15,13 @@ across all sessions. Heavy work runs synchronously and is meant to be
 dispatched from a thread pool by the caller, the same way Whisper does.
 
 Configuration lives in :class:`app.core.config.Settings` (``diarization_*``
-fields). The chosen default model is
-``pyannote/speaker-diarization-community-1`` because it does **not** require
-an HF token and ships under MIT.
+fields). The default pipeline is ``pyannote/speaker-diarization-3.1``, which
+is the stable release for pyannote.audio 3.1.x.  It requires:
+
+* A HuggingFace access token (``HF_TOKEN`` env var).
+* Accepted user conditions for **both** gated hub models:
+  - https://hf.co/pyannote/speaker-diarization-3.1
+  - https://hf.co/pyannote/segmentation-3.0  (sub-model loaded by the pipeline)
 """
 
 from __future__ import annotations

@@ -188,7 +188,11 @@ class Settings(BaseSettings):
     )
     diarization_model_id: str = Field(
         default="pyannote/speaker-diarization-3.1",
-        description="HF id of the pyannote speaker diarization pipeline.",
+        description=(
+            "HF id of the pyannote speaker diarization pipeline. "
+            "Requires HF_TOKEN and accepted user conditions for both "
+            "pyannote/speaker-diarization-3.1 and pyannote/segmentation-3.0."
+        ),
     )
     diarization_embedding_model_id: str = Field(
         default="pyannote/wespeaker-voxceleb-resnet34-LM",
