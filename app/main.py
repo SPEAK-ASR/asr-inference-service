@@ -14,7 +14,9 @@ Endpoints:
 from __future__ import annotations
 
 import os
-os.environ.setdefault("TORCH_BACKEND_NNPACK_ENABLED", "0")
+# Suppress NNPACK unsupported-hardware noise (common on ROCm/AMD hosts).
+os.environ.setdefault("PYTORCH_ENABLE_NNPACK", "0")
+os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
 
 from contextlib import asynccontextmanager
 from pathlib import Path
