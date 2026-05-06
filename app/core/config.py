@@ -80,6 +80,12 @@ class Settings(BaseSettings):
             data["model_kind"] = "faster_whisper"
         elif b == "transformers":
             data["model_kind"] = "merged" if tm == "full" else "peft"
+
+        allowed_mime = data.get("http_transcribe_allowed_mime_types")
+        if isinstance(allowed_mime, str):
+            data["http_transcribe_allowed_mime_types"] = [
+                item.strip() for item in allowed_mime.split(",") if item.strip()
+            ]
         return data
 
     # --- Model selection ---
@@ -179,8 +185,22 @@ class Settings(BaseSettings):
     log_level: Literal["debug", "info", "warning", "error"] = "info"
 
     # --- Limits ---
-    max_chunk_bytes: int = 256 * 1024
+    max_chunk_bytes: int = 1024 * 1024
     """Reject incoming audio_chunk bigger than this (post-base64-decode)."""
+
+    http_transcribe_max_upload_bytes: int = 50 * 1024 * 1024
+    """Reject HTTP-uploaded files larger than this many bytes."""
+
+    http_transcribe_allowed_mime_types: list[str] = Field(
+        default_factory=lambda: [
+            "audio/*",
+            "video/*",
+        ]
+    )
+    """Allowed MIME types for HTTP uploads (supports exact and wildcard patterns)."""
+
+    http_transcribe_timeout_seconds: int = 300
+    """Timeout for synchronous HTTP transcription calls."""
 
     # --- Derived helpers -----------------------------------------------------
 
