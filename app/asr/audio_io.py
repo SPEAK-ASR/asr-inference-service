@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import subprocess
 
 import numpy as np
 import soundfile as sf
@@ -26,9 +27,41 @@ def decode_uploaded_audio(audio_bytes: bytes, target_sample_rate: int) -> np.nda
     if not audio_bytes:
         return np.zeros(0, dtype=np.float32)
 
-    with sf.SoundFile(io.BytesIO(audio_bytes)) as snd:
-        sample_rate = int(snd.samplerate)
-        data = snd.read(dtype="float32", always_2d=True)
+    try:
+        with sf.SoundFile(io.BytesIO(audio_bytes)) as snd:
+            sample_rate = int(snd.samplerate)
+            data = snd.read(dtype="float32", always_2d=True)
+    except Exception:
+        # Fallback for container/codec combinations that libsndfile cannot parse
+        # reliably (e.g., AAC in M4A from mobile recordings).
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-i",
+                "pipe:0",
+                "-f",
+                "f32le",
+                "-acodec",
+                "pcm_f32le",
+                "-ac",
+                "1",
+                "-ar",
+                str(target_sample_rate),
+                "pipe:1",
+            ],
+            input=audio_bytes,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+        raw = proc.stdout
+        if not raw:
+            return np.zeros(0, dtype=np.float32)
+        mono = np.frombuffer(raw, dtype=np.float32)
+        return np.clip(np.ascontiguousarray(mono, dtype=np.float32), -1.0, 1.0)
 
     if data.size == 0:
         return np.zeros(0, dtype=np.float32)

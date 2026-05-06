@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import io
+import subprocess
 import wave
 
 import numpy as np
+import pytest
+import soundfile as sf
 
 from app.asr.audio_io import decode_uploaded_audio
 
@@ -37,3 +40,20 @@ def test_decode_uploaded_audio_invalid_payload_raises() -> None:
         raise AssertionError("Expected decode_uploaded_audio to fail for invalid payload")
     except Exception:
         pass
+
+
+def test_decode_uploaded_audio_uses_ffmpeg_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _raise_libsndfile_error(*args, **kwargs):
+        raise sf.LibsndfileError(1, "format not recognized")
+
+    expected = np.array([0.0, 0.25, -0.25], dtype=np.float32)
+
+    def _fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args=args[0], returncode=0, stdout=expected.tobytes(), stderr=b"")
+
+    monkeypatch.setattr(sf, "SoundFile", _raise_libsndfile_error)
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    decoded = decode_uploaded_audio(b"m4a-bytes", target_sample_rate=16000)
+    assert decoded.dtype == np.float32
+    assert np.allclose(decoded, expected)
