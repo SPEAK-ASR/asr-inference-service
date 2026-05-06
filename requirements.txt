@@ -23,10 +23,8 @@ silero-vad>=6,<7
 # --- Audio I/O ---
 soundfile>=0.12
 
-# --- Speaker diarization (optional; HF token + accepted model terms) ---
-# pyannote/speaker-diarization-community-1 targets pyannote.audio 4.x (incl. PLDA); 3.x raises TypeError on load.
-pyannote.audio>=4.0,<5
-torchaudio>=2.8,<3
+pyannote.audio>=3.3,<4
+torchaudio>=2.2
 
 # --- Misc ---
 typing-extensions>=4.10
