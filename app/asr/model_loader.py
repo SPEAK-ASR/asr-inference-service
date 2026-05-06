@@ -17,6 +17,11 @@ from typing import Any, Literal
 
 import numpy as np
 import torch
+
+_nnpack = getattr(torch.backends, "nnpack", None)
+if _nnpack is not None:
+    _nnpack.enabled = False
+
 from transformers import (
     AutoModelForSpeechSeq2Seq,
     AutoProcessor,

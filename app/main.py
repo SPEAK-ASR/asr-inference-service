@@ -17,7 +17,10 @@ from __future__ import annotations
 
 import os
 
+# Before any `import torch` (pulled in via app routers → model_loader). NNPACK probes
+# log "Unsupported hardware" on many Docker/VM CPUs; these knobs quiet that noise.
 os.environ.setdefault("TORCH_BACKEND_NNPACK_ENABLED", "0")
+os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
 
 from contextlib import asynccontextmanager
 from pathlib import Path
