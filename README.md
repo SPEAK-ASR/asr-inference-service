@@ -6,6 +6,7 @@ Sinhala (default adapter: `SPEAK-ASR/whisper-si-exp-10-medium-all`).
 
 > Detailed design: [investigated_detail.md](investigated_detail.md)
 > Live progress: [PROGRESS.md](PROGRESS.md)
+> HTTP upload API details: [docs/http-transcription.md](docs/http-transcription.md)
 
 ## Quick start
 
@@ -30,6 +31,35 @@ Then open the test client in your browser:
 - Test page: http://localhost:8000/client
 - Health (live): http://localhost:8000/health/live
 - Health (ready): http://localhost:8000/health/ready
+- HTTP transcription: `POST /api/transcribe`
+
+## Synchronous HTTP transcription
+
+Use this when the frontend records audio first and uploads it on demand.
+
+Request:
+- `multipart/form-data`
+- `audio_file` (required)
+- `language` (optional; defaults to `ASR_LANGUAGE_HINT`)
+
+Example (`curl`):
+
+```bash
+curl -X POST "http://localhost:8000/api/transcribe" \
+  -F "audio_file=@./sample.wav;type=audio/wav" \
+  -F "language=si"
+```
+
+Example response:
+
+```json
+{
+  "text": "....",
+  "language": "si",
+  "duration_ms": 482,
+  "model_kind": "peft"
+}
+```
 
 ## Model loading
 
