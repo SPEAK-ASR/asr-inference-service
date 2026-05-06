@@ -57,3 +57,27 @@ def test_decode_uploaded_audio_uses_ffmpeg_fallback(monkeypatch: pytest.MonkeyPa
     decoded = decode_uploaded_audio(b"m4a-bytes", target_sample_rate=16000)
     assert decoded.dtype == np.float32
     assert np.allclose(decoded, expected)
+
+
+def test_decode_uploaded_audio_retries_ffmpeg_with_tempfile(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _raise_libsndfile_error(*args, **kwargs):
+        raise sf.LibsndfileError(1, "format not recognized")
+
+    expected = np.array([0.0, 0.25, -0.25], dtype=np.float32)
+    calls: list[list[str]] = []
+
+    def _fake_run(*args, **kwargs):
+        cmd = args[0]
+        calls.append(cmd)
+        if "pipe:0" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=b"", stderr=b"")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=expected.tobytes(), stderr=b"")
+
+    monkeypatch.setattr(sf, "SoundFile", _raise_libsndfile_error)
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    decoded = decode_uploaded_audio(b"m4a-bytes", target_sample_rate=16000)
+    assert decoded.dtype == np.float32
+    assert np.allclose(decoded, expected)
+    assert any("pipe:0" in cmd for cmd in calls)
+    assert any("pipe:0" not in cmd for cmd in calls)
