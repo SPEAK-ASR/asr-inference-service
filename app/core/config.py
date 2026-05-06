@@ -97,10 +97,10 @@ class Settings(BaseSettings):
         description="HF repo id or local path of the model_kind-specific artifact.",
     )
     base_model_id: str | None = Field(
-        default=None,
+        default="openai/whisper-medium",
         description=(
-            "PEFT only: explicit base-model override. If None, the loader reads "
-            "base_model_name_or_path from the adapter's config."
+            "PEFT only: explicit base-model override. Defaults to "
+            "'openai/whisper-medium'."
         ),
     )
     merge_peft_adapter: bool = Field(

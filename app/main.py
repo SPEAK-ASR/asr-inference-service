@@ -11,10 +11,10 @@ Endpoints:
     GET  /client           -> manual mic test page (tests/manual/client.html)
 """
 
+from __future__ import annotations
+
 import os
 os.environ.setdefault("TORCH_BACKEND_NNPACK_ENABLED", "0")
-
-from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
