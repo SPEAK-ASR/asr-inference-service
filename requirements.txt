@@ -23,5 +23,9 @@ silero-vad>=6,<7
 # --- Audio I/O ---
 soundfile>=0.12
 
+# --- Speaker diarization (optional; requires HF token accepted on pyannote model card) ---
+pyannote.audio>=3.3,<4
+torchaudio>=2.2
+
 # --- Misc ---
 typing-extensions>=4.10

@@ -22,6 +22,13 @@ class _BaseClientMsg(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class PostprocessingOpts(_BaseClientMsg):
+    """Per-session overrides; null/absent means use server defaults from GET /api/postprocessing."""
+
+    diarization: bool | None = None
+    noise_removal: bool | None = None
+
+
 class StartMsg(_BaseClientMsg):
     """Initial message; opens an ASR session."""
 
@@ -31,6 +38,7 @@ class StartMsg(_BaseClientMsg):
     encoding: Literal["pcm_s16le"] = "pcm_s16le"
     channels: Literal[1] = 1
     language_hint: str | None = Field(default="si", max_length=8)
+    postprocessing: PostprocessingOpts | None = None
 
 
 class AudioChunkMsg(_BaseClientMsg):
@@ -90,6 +98,7 @@ class PartialTranscript(_BaseServerMsg):
     start_ms: int
     end_ms: int
     is_stable: bool = False
+    speaker: str | None = None
 
 
 class FinalTranscript(_BaseServerMsg):
@@ -99,6 +108,7 @@ class FinalTranscript(_BaseServerMsg):
     text: str
     start_ms: int
     end_ms: int
+    speaker: str | None = None
 
 
 class Warning(_BaseServerMsg):

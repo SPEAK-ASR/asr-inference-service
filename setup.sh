@@ -126,6 +126,32 @@ write_env_default() {
 EOF
 }
 
+append_postprocessing_env_interactive() {
+  echo ""
+  read -r -p "Add optional speaker diarization (pyannote) vars to .env? [y/N]: " DO_PP
+  if [[ ! "${DO_PP:-}" =~ ^[Yy]$ ]]; then
+    return 0
+  fi
+  echo "Accept the model terms on Hugging Face for the diarization pipeline."
+  local hf_token dia_model dia_def noise_def
+  hf_token="$(prompt_optional_blank "ASR_HF_TOKEN (optional; else use HF_TOKEN / HUGGING_FACE_HUB_TOKEN)")"
+  dia_model="$(prompt_with_default "ASR_DIARIZATION_MODEL_ID" "pyannote/speaker-diarization-community-1")"
+  dia_def="$(prompt_with_default "ASR_POSTPROCESSING_DIARIZATION_DEFAULT" "false")"
+  noise_def="$(prompt_with_default "ASR_POSTPROCESSING_NOISE_REMOVAL_DEFAULT" "false")"
+
+  {
+    echo ""
+    echo "# Optional: pyannote speaker diarization (see config/*.env.example)"
+    if [[ -n "${hf_token}" ]]; then
+      echo "ASR_HF_TOKEN=${hf_token}"
+    fi
+    echo "ASR_DIARIZATION_MODEL_ID=${dia_model}"
+    echo "ASR_POSTPROCESSING_DIARIZATION_DEFAULT=${dia_def}"
+    echo "ASR_POSTPROCESSING_NOISE_REMOVAL_DEFAULT=${noise_def}"
+  } >> .env
+  echo "Appended postprocessing variables to .env"
+}
+
 case "$MODE_CHOICE" in
   1)
     backup_env
@@ -148,6 +174,8 @@ case "$MODE_CHOICE" in
     echo "Wrote minimal .env (default app settings)."
     ;;
 esac
+
+append_postprocessing_env_interactive
 
 echo ""
 PY=""

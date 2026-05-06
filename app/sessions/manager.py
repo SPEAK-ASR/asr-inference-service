@@ -49,6 +49,10 @@ class SessionState:
     last_chunk_at: float = field(default_factory=time.time)
     last_partial_emit_at: float = 0.0
 
+    diarization_enabled: bool = False
+    noise_removal_enabled: bool = False
+    last_speaker: str | None = None
+
     close_callback: CloseCallback | None = None
 
     def __post_init__(self) -> None:

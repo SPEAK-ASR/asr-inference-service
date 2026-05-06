@@ -46,6 +46,7 @@ from app.sessions.schemas import (
     SessionSummary,
     StartMsg,
     StopMsg,
+    Warning,
 )
 
 log = get_logger(__name__)
@@ -60,6 +61,26 @@ def _engine(ws: WebSocket) -> StreamingEngine:
 
 def _manager(ws: WebSocket) -> SessionManager:
     return ws.app.state.sessions  # type: ignore[no-any-return]
+
+
+def _postprocessing_runtime(ws: WebSocket) -> Any:
+    return ws.app.state.postprocessing  # type: ignore[no-any-return]
+
+
+def _prepare_segment_audio(state: SessionState, segment_audio: np.ndarray) -> np.ndarray:
+    from app.postprocessing.enhance import apply_noise_removal
+
+    arr = np.ascontiguousarray(segment_audio, dtype=np.float32)
+    return apply_noise_removal(arr, enabled=state.noise_removal_enabled)
+
+
+async def _speaker_label(ws: WebSocket, state: SessionState, audio: np.ndarray) -> str | None:
+    if not state.diarization_enabled:
+        return None
+    svc = getattr(ws.app.state, "diarization", None)
+    if svc is None:
+        return None
+    return await svc.label_segment(audio, get_settings().target_sample_rate)
 
 
 async def _send_json(ws: WebSocket, payload: Any) -> None:
@@ -136,6 +157,18 @@ async def ws_transcribe(ws: WebSocket) -> None:
             sample_rate=first.sample_rate,
             language_hint=first.language_hint or settings.language_hint,
         )
+        defaults = await _postprocessing_runtime(ws).snapshot()
+        pp_opts = first.postprocessing
+        state.diarization_enabled = (
+            pp_opts.diarization
+            if pp_opts is not None and pp_opts.diarization is not None
+            else defaults["diarization_enabled"]
+        )
+        state.noise_removal_enabled = (
+            pp_opts.noise_removal
+            if pp_opts is not None and pp_opts.noise_removal is not None
+            else defaults["noise_removal_enabled"]
+        )
 
         async def close_cb(reason: str) -> None:
             nonlocal close_reason
@@ -160,6 +193,26 @@ async def ws_transcribe(ws: WebSocket) -> None:
             ws,
             Ack(session_id=state.session_id, message="stream_started"),
         )
+        if state.noise_removal_enabled:
+            await _send_json(
+                ws,
+                Warning(
+                    code="NOISE_REMOVAL_NOT_IMPLEMENTED",
+                    message="noise_removal is enabled but not implemented yet; audio is unchanged.",
+                ),
+            )
+        if state.diarization_enabled and not settings.resolved_hf_token():
+            await _send_json(
+                ws,
+                Warning(
+                    code="DIARIZATION_NO_HF_TOKEN",
+                    message=(
+                        "diarization is enabled but no Hugging Face token is configured "
+                        "(ASR_HF_TOKEN, HF_TOKEN, or HUGGING_FACE_HUB_TOKEN); "
+                        "final_transcript speaker fields will be null."
+                    ),
+                ),
+            )
 
         if settings.streaming_mode == "sliding_window":
             partial_task = asyncio.create_task(
@@ -235,9 +288,10 @@ async def _emit_final_for_segment(
     segment_audio: np.ndarray,
 ) -> None:
     """Run full decode on a VAD segment and send ``final_transcript``."""
+    processed = _prepare_segment_audio(state, segment_audio)
     try:
         text, decode_seconds = await engine.transcribe_audio_array(
-            segment_audio,
+            processed,
             language_hint=state.language_hint,
         )
     except Exception:  # noqa: BLE001
@@ -248,10 +302,16 @@ async def _emit_final_for_segment(
         )
         return
 
+    spk: str | None = None
+    if state.diarization_enabled:
+        spk = await _speaker_label(ws, state, processed)
+        if spk:
+            state.last_speaker = spk
+
     final_text = state.decoder.finalize(text)
     end_ms = state.duration_ms()
     sample_rate = state.sample_rate
-    start_ms = max(0, end_ms - int(len(segment_audio) / float(sample_rate) * 1000))
+    start_ms = max(0, end_ms - int(len(processed) / float(sample_rate) * 1000))
     utterance_id = state.utterance_id
 
     await _send_json(
@@ -262,6 +322,7 @@ async def _emit_final_for_segment(
             text=final_text,
             start_ms=start_ms,
             end_ms=end_ms,
+            speaker=spk,
         ),
     )
     log.info(
@@ -380,6 +441,7 @@ async def _partial_flush_loop(
                 start_ms=start_ms,
                 end_ms=end_ms,
                 is_stable=emit.is_stable,
+                speaker=state.last_speaker if state.diarization_enabled else None,
             ),
         )
         log.debug(
@@ -416,9 +478,12 @@ async def _finalize_utterance(
         state.new_utterance()
         return
 
+    raw = np.ascontiguousarray(state.engine_buffer.samples, dtype=np.float32)
+    processed = _prepare_segment_audio(state, raw)
+
     try:
-        text, decode_seconds = await engine.transcribe_full_utterance(
-            state.engine_buffer,
+        text, decode_seconds = await engine.transcribe_audio_array(
+            processed,
             language_hint=state.language_hint,
         )
     except Exception:  # noqa: BLE001
@@ -429,9 +494,16 @@ async def _finalize_utterance(
         )
         return
 
+    spk: str | None = None
+    if state.diarization_enabled:
+        spk = await _speaker_label(ws, state, processed)
+        if spk:
+            state.last_speaker = spk
+
     final_text = state.decoder.finalize(text)
     end_ms = state.duration_ms()
-    start_ms = max(0, end_ms - int(state.engine_buffer.duration_seconds * 1000))
+    sample_rate = state.sample_rate
+    start_ms = max(0, end_ms - int(len(processed) / float(sample_rate) * 1000))
     utterance_id = state.utterance_id
 
     await _send_json(
@@ -442,6 +514,7 @@ async def _finalize_utterance(
             text=final_text,
             start_ms=start_ms,
             end_ms=end_ms,
+            speaker=spk,
         ),
     )
     log.info(

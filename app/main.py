@@ -8,13 +8,16 @@ Endpoints:
     GET  /health/live      -> liveness (process up)
     GET  /health/ready     -> readiness (model loaded, device available)
     WS   /ws/transcribe    -> realtime transcription
+    GET  /api/postprocessing -> optional postprocessing toggles (diarization, noise removal)
+    PUT  /api/postprocessing -> update toggles
     GET  /client           -> manual mic test page (tests/manual/client.html)
 """
 
-import os
-os.environ.setdefault("TORCH_BACKEND_NNPACK_ENABLED", "0")
-
 from __future__ import annotations
+
+import os
+
+os.environ.setdefault("TORCH_BACKEND_NNPACK_ENABLED", "0")
 
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,11 +26,14 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.postprocessing_config import router as postprocessing_router
 from app.api.ws_transcribe import router as ws_router
 from app.asr.model_loader import load_asr
 from app.asr.streaming_engine import StreamingEngine
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
+from app.postprocessing.diarization import DiarizationService
+from app.postprocessing.runtime import PostprocessingRuntime
 from app.sessions.manager import SessionManager
 
 configure_logging()
@@ -57,10 +63,18 @@ async def lifespan(app: FastAPI):
     sessions = SessionManager(settings=settings)
     await sessions.start()
 
+    postprocessing = PostprocessingRuntime(
+        diarization_enabled=settings.postprocessing_diarization_default,
+        noise_removal_enabled=settings.postprocessing_noise_removal_default,
+    )
+    diarization = DiarizationService(settings=settings)
+
     app.state.settings = settings
     app.state.asr = asr
     app.state.engine = engine
     app.state.sessions = sessions
+    app.state.postprocessing = postprocessing
+    app.state.diarization = diarization
 
     log.info(
         "app_ready",
@@ -127,6 +141,7 @@ async def health_ready() -> JSONResponse:
     return JSONResponse(content=payload, status_code=200 if ready else 503)
 
 
+app.include_router(postprocessing_router)
 app.include_router(ws_router)
 
 

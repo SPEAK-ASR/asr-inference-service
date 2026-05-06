@@ -182,7 +182,42 @@ class Settings(BaseSettings):
     max_chunk_bytes: int = 256 * 1024
     """Reject incoming audio_chunk bigger than this (post-base64-decode)."""
 
+    # --- Postprocessing (diarization / future denoise) ---
+    hf_token: str | None = Field(
+        default=None,
+        description=(
+            "Hugging Face hub token for pyannote pipelines "
+            "(falls back to HF_TOKEN / HUGGING_FACE_HUB_TOKEN)."
+        ),
+    )
+    diarization_model_id: str = Field(
+        default="pyannote/speaker-diarization-community-1",
+        description="pyannote Pipeline.from_pretrained id for speaker diarization.",
+    )
+    postprocessing_diarization_default: bool = Field(
+        default=False,
+        description="Default on/off for diarization on new WebSocket sessions.",
+    )
+    postprocessing_noise_removal_default: bool = Field(
+        default=False,
+        description="Default on/off for noise removal on new sessions (not implemented yet).",
+    )
+
     # --- Derived helpers -----------------------------------------------------
+
+    def resolved_hf_token(self) -> str | None:
+        """Token for Hugging Face downloads (pyannote), or None if unset."""
+        for raw in (
+            self.hf_token,
+            os.environ.get("HF_TOKEN"),
+            os.environ.get("HUGGING_FACE_HUB_TOKEN"),
+        ):
+            if raw is None:
+                continue
+            tok = str(raw).strip()
+            if tok:
+                return tok
+        return None
 
     @property
     def backend(self) -> Literal["transformers", "faster_whisper"]:

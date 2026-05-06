@@ -170,6 +170,33 @@ goto AFTER_ENV
 :AFTER_ENV
 
 echo.
+set "DO_PP="
+set /p DO_PP="Add optional speaker diarization (pyannote) vars to .env? [y/N]: "
+if /i "!DO_PP!"=="y" (
+  echo Accept the model terms on Hugging Face for the diarization pipeline.
+  set "V_HF="
+  set /p V_HF="ASR_HF_TOKEN (optional; else use HF_TOKEN / HUGGING_FACE_HUB_TOKEN): "
+  set "V_DIA_MODEL="
+  set /p V_DIA_MODEL="ASR_DIARIZATION_MODEL_ID [pyannote/speaker-diarization-community-1]: "
+  if "!V_DIA_MODEL!"=="" set "V_DIA_MODEL=pyannote/speaker-diarization-community-1"
+  set "V_DIA_DEF="
+  set /p V_DIA_DEF="ASR_POSTPROCESSING_DIARIZATION_DEFAULT [false]: "
+  if "!V_DIA_DEF!"=="" set "V_DIA_DEF=false"
+  set "V_NOISE_DEF="
+  set /p V_NOISE_DEF="ASR_POSTPROCESSING_NOISE_REMOVAL_DEFAULT [false]: "
+  if "!V_NOISE_DEF!"=="" set "V_NOISE_DEF=false"
+  echo.>>.env
+  echo # Optional: pyannote speaker diarization (see config/*.env.example)>>.env
+  if not "!V_HF!"=="" (
+    (echo ASR_HF_TOKEN=!V_HF!)>>.env
+  )
+  (echo ASR_DIARIZATION_MODEL_ID=!V_DIA_MODEL!)>>.env
+  (echo ASR_POSTPROCESSING_DIARIZATION_DEFAULT=!V_DIA_DEF!)>>.env
+  (echo ASR_POSTPROCESSING_NOISE_REMOVAL_DEFAULT=!V_NOISE_DEF!)>>.env
+  echo Appended postprocessing variables to .env
+)
+
+echo.
 set "LAUNCH_PY=python"
 set "PY_EXTRA="
 where python >nul 2>&1
