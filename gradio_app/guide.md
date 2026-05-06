@@ -16,7 +16,10 @@ source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
 # 2) Install Gradio demo dependencies
 pip install -r gradio_app/requirements.txt
 
-# 3) (Optional) For CUDA inference, install the matching torch wheel first:
+# 3) (Optional) For CUDA inference, install the matching torch wheel first.
+#    Check your CUDA version with: nvidia-smi
+#    Then pick the right wheel from https://pytorch.org/get-started/locally/
+#    Example for CUDA 12.1:
 #    pip install --index-url https://download.pytorch.org/whl/cu121 torch torchaudio
 #    pip install -r gradio_app/requirements.txt
 ```

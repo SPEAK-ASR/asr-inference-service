@@ -38,7 +38,7 @@ print("All models ready.\n")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def chunk_has_speech(audio_chunk: np.ndarray) -> bool:
+def chunk_has_speech(audio_chunk: np.ndarray, vad_threshold: float = VAD_THRESHOLD) -> bool:
     """Run VAD on a single small chunk. Returns True if any speech detected."""
     if len(audio_chunk) == 0:
         return False
@@ -47,7 +47,7 @@ def chunk_has_speech(audio_chunk: np.ndarray) -> bool:
         tensor,
         vad_model,
         sampling_rate=TARGET_SR,
-        threshold=VAD_THRESHOLD,
+        threshold=vad_threshold,
         min_speech_duration_ms=100,
         min_silence_duration_ms=50,
     )
@@ -86,7 +86,9 @@ def reset_segment(state: dict) -> dict:
 
 # ── Streaming callback ────────────────────────────────────────────────────────
 
-def stream_transcribe(audio_chunk, state: dict, task: str):
+def stream_transcribe(audio_chunk, state: dict, task: str,
+                      silence_trigger_sec: float = SILENCE_TRIGGER_SEC,
+                      vad_threshold: float = VAD_THRESHOLD):
     """
     Called by Gradio on every microphone chunk.
 
@@ -123,7 +125,7 @@ def stream_transcribe(audio_chunk, state: dict, task: str):
         waveform = t.squeeze(0).numpy()
 
     # ── VAD: is this chunk speech or silence? ──
-    speech_in_chunk = chunk_has_speech(waveform)
+    speech_in_chunk = chunk_has_speech(waveform, vad_threshold)
 
     if speech_in_chunk:
         # Active speech → accumulate and reset silence counter
@@ -139,13 +141,13 @@ def stream_transcribe(audio_chunk, state: dict, task: str):
             state["buffer"]          = np.concatenate([state["buffer"], waveform])
         else:
             # Silence before any speech — skip entirely
-            return state, state.get("text", "🎤 Listening…")
+            return state, state["text"] or "🎤 Listening…"
 
     # ── decide whether to transcribe ──
     silent_sec  = state["silent_samples"] / TARGET_SR
     buffer_sec  = len(state["buffer"])    / TARGET_SR
 
-    silence_triggered = state["has_speech"] and silent_sec >= SILENCE_TRIGGER_SEC
+    silence_triggered = state["has_speech"] and silent_sec >= silence_trigger_sec
     buffer_maxed      = buffer_sec >= MAX_BUFFER_SEC
 
     if silence_triggered or buffer_maxed:
@@ -160,7 +162,7 @@ def stream_transcribe(audio_chunk, state: dict, task: str):
 
         state = reset_segment(state)   # ready for next utterance
 
-    return state, state.get("text", "🎤 Listening…")
+    return state, state["text"] or "🎤 Listening…"
 
 
 def clear_all():
@@ -220,7 +222,7 @@ with gr.Blocks(title="Sinhala ASR — Real-time Whisper") as demo:
 
     audio_input.stream(
         fn=stream_transcribe,
-        inputs=[audio_input, session_state, task],
+        inputs=[audio_input, session_state, task, silence_slider, vad_slider],
         outputs=[session_state, output],
     )
 
