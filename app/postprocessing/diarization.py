@@ -46,10 +46,20 @@ class DiarizationService:
             raise RuntimeError(
                 "Hugging Face token is not configured (set ASR_HF_TOKEN or HF_TOKEN)."
             )
-        return Pipeline.from_pretrained(
-            self._settings.diarization_model_id,
-            token=token,
-        )
+        model_id = self._settings.diarization_model_id
+
+        from inspect import signature
+
+        params = signature(Pipeline.from_pretrained).parameters
+        if "token" in params:
+            return Pipeline.from_pretrained(model_id, token=token)
+        if "use_auth_token" in params:
+            return Pipeline.from_pretrained(model_id, use_auth_token=token)
+
+        from huggingface_hub import login
+
+        login(token=token)
+        return Pipeline.from_pretrained(model_id)
 
     def _sync_label(self, pipeline: Any, audio_f32: np.ndarray, sample_rate: int) -> str | None:
         from pyannote.audio.pipelines.speaker_diarization import DiarizeOutput
