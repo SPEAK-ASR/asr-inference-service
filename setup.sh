@@ -26,6 +26,37 @@ echo ""
 echo "ASR inference service — setup"
 echo "=============================="
 echo ""
+
+install_ffmpeg() {
+  if command -v ffmpeg >/dev/null 2>&1; then
+    echo "ffmpeg already installed: $(ffmpeg -version | head -n 1)"
+    return
+  fi
+
+  echo "ffmpeg not found; attempting install..."
+  if command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update && sudo apt-get install -y ffmpeg
+  elif command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y ffmpeg
+  elif command -v yum >/dev/null 2>&1; then
+    sudo yum install -y ffmpeg
+  elif command -v zypper >/dev/null 2>&1; then
+    sudo zypper --non-interactive install ffmpeg
+  else
+    echo "Warning: could not auto-install ffmpeg (no supported package manager found)."
+    echo "Install ffmpeg manually before running audio endpoints."
+  fi
+}
+
+read -r -p "Install ffmpeg system dependency if missing? [Y/n]: " DO_FFMPEG
+DO_FFMPEG="${DO_FFMPEG:-Y}"
+if [[ "$DO_FFMPEG" =~ ^[Nn]$ ]]; then
+  echo "Skipping ffmpeg installation."
+else
+  install_ffmpeg
+fi
+echo ""
+
 echo "Select model loading mode:"
 echo "  1) PEFT adapter + base (HF LoRA on Whisper)"
 echo "  2) Merged / full single HF checkpoint"
