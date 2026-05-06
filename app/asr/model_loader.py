@@ -1,22 +1,17 @@
-"""Whisper model loader with auto CUDA/CPU device selection.
+"""Whisper model loader with CUDA/CPU selection.
 
-Three model kinds are supported (selected by ``Settings.model_kind``):
+``model_kind`` (see ``Settings``):
 
-1. ``peft``           — PEFT/LoRA adapter on top of a base Whisper checkpoint.
-                        Base id is read from the adapter's config (or
-                        ``Settings.base_model_id`` if explicitly set). When
-                        ``Settings.merge_peft_adapter`` is True the adapter
-                        is merged into the base weights for inference.
-2. ``merged``         — A single, fully-merged HF checkpoint loaded directly.
-3. ``faster_whisper`` — CTranslate2 export loaded via ``faster_whisper``.
+- ``peft`` — load base with ``WhisperProcessor`` + ``WhisperForConditionalGeneration``,
+  attach the LoRA repo with ``PeftModel``, optionally ``merge_and_unload()``.
+- ``merged`` — single checkpoint via ``AutoProcessor`` + ``AutoModelForSpeechSeq2Seq``.
+- ``faster_whisper`` — CTranslate2 export via ``faster_whisper``.
 
-The active model is loaded once at app startup and reused; concurrent calls
-are serialized in the streaming engine via an asyncio lock.
+The model loads once at startup; concurrent transcription is serialized upstream.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -25,6 +20,8 @@ import torch
 from transformers import (
     AutoModelForSpeechSeq2Seq,
     AutoProcessor,
+    WhisperForConditionalGeneration,
+    WhisperProcessor,
     pipeline,
 )
 
@@ -77,10 +74,6 @@ class LoadedASR:
         )
 
 
-# ---------------------------------------------------------------------------
-# Device / dtype helpers
-# ---------------------------------------------------------------------------
-
 def _resolve_device(setting: str) -> str:
     if setting == "cpu":
         return "cpu"
@@ -104,17 +97,12 @@ def _resolve_dtype(device: str, settings: Settings) -> torch.dtype:
 
 
 def _actual_dtype_str(model: Any) -> str:
-    """Return the real dtype of the loaded model parameters as a short string."""
     try:
         dtype = next(model.parameters()).dtype
     except StopIteration:
         return "unknown"
     return str(dtype).replace("torch.", "")
 
-
-# ---------------------------------------------------------------------------
-# Transcribe paths
-# ---------------------------------------------------------------------------
 
 def _transcribe_transformers_pipeline(
     pipe: Any,
@@ -138,10 +126,6 @@ def _transcribe_faster_whisper(
     audio: np.ndarray,
     generate_kwargs: dict[str, Any],
 ) -> str:
-    # Streaming-friendly defaults:
-    #   - vad_filter=False: we already do Silero VAD upstream.
-    #   - condition_on_previous_text=False: avoids hallucination drift across
-    #     short partial windows (a known faster-whisper streaming pitfall).
     settings = get_settings()
     kw: dict[str, Any] = {
         "task": generate_kwargs.get("task", "transcribe"),
@@ -157,124 +141,39 @@ def _transcribe_faster_whisper(
     return "".join(s.text for s in segments).strip()
 
 
-# ---------------------------------------------------------------------------
-# Loaders — one per model_kind
-# ---------------------------------------------------------------------------
-
 def _detect_peft_base_model(adapter_id: str) -> str:
-    """Read ``base_model_name_or_path`` from a PEFT adapter's config."""
     try:
         from peft import PeftConfig
-    except ImportError as exc:  # pragma: no cover - dep listed in requirements
+    except ImportError as exc:
         raise RuntimeError(
             "model_kind='peft' requires the 'peft' package. Install requirements.txt."
         ) from exc
 
     try:
         peft_cfg = PeftConfig.from_pretrained(adapter_id)
-    except Exception as exc:  # noqa: BLE001 - many possible HF/IO errors
+    except Exception as exc:
         raise RuntimeError(
             f"Could not load PEFT config from '{adapter_id}'. "
-            f"Is this actually a LoRA/PEFT adapter repo with adapter_config.json? "
-            f"If it's a fully-merged checkpoint, set ASR_MODEL_KIND=merged. "
-            f"Underlying error: {exc}"
+            f"If this is a fully merged checkpoint, set ASR_MODEL_KIND=merged. "
+            f"Detail: {exc}"
         ) from exc
 
     base = getattr(peft_cfg, "base_model_name_or_path", None)
     if not base:
         raise RuntimeError(
-            f"PEFT adapter '{adapter_id}' does not declare a base_model_name_or_path. "
-            f"Set ASR_BASE_MODEL_ID explicitly."
+            f"PEFT adapter '{adapter_id}' has no base_model_name_or_path; "
+            f"set ASR_BASE_MODEL_ID."
         )
     return base
 
 
-def _whisper_processor_needs_manual_assembly(exc: BaseException) -> bool:
-    """Detect Hub layouts / tokenizer JSON that break stock ``AutoProcessor``."""
-    if isinstance(exc, OSError):
-        return "preprocessor_config.json" in str(exc).lower()
-    if isinstance(exc, AttributeError):
-        # e.g. tokenizer_config has ``extra_special_tokens`` as a list; fast
-        # tokenizer calls ``.keys()`` on it (WhisperTokenizerFast).
-        m = str(exc).lower()
-        return "keys" in m and "list" in m
-    return False
-
-
-def _load_whisper_tokenizer_slow_fallback(model_id: str) -> Any:
-    """Load tokenizer; fall back to slow tokenizer for odd ``tokenizer_config`` files."""
-    from transformers import AutoTokenizer
-
-    try:
-        return AutoTokenizer.from_pretrained(model_id, use_fast=True)
-    except AttributeError:
-        log.info(
-            "asr_whisper_tokenizer_slow",
-            extra={
-                "model_id": model_id,
-                "note": "WhisperTokenizerFast failed; using slow tokenizer",
-            },
-        )
-        return AutoTokenizer.from_pretrained(model_id, use_fast=False)
-
-
-def _assemble_whisper_processor_manual(model_id: str, *, cause: BaseException) -> Any:
-    """Build ``WhisperProcessor`` from ``processor_config.json`` + tokenizer files."""
-    from huggingface_hub import hf_hub_download
-    from transformers import WhisperFeatureExtractor, WhisperProcessor
-
-    log.info(
-        "asr_whisper_processor_manual_assembly",
-        extra={"model_id": model_id, "trigger": type(cause).__name__},
-    )
-
-    try:
-        proc_path = hf_hub_download(repo_id=model_id, filename="processor_config.json")
-    except Exception as hub_exc:  # noqa: BLE001
-        raise OSError(
-            f"Could not load processor for '{model_id}': processor_config.json not available. "
-            f"Original error: {cause}"
-        ) from hub_exc
-
-    with open(proc_path, encoding="utf-8") as f:
-        proc_cfg = json.load(f)
-    fe_cfg = proc_cfg.get("feature_extractor")
-    if not isinstance(fe_cfg, dict):
-        raise OSError(
-            f"'{model_id}': processor_config.json has no 'feature_extractor' object; "
-            f"cannot build WhisperFeatureExtractor."
-        ) from cause
-
-    feature_extractor = WhisperFeatureExtractor.from_dict(fe_cfg)
-    tokenizer = _load_whisper_tokenizer_slow_fallback(model_id)
-    return WhisperProcessor(feature_extractor=feature_extractor, tokenizer=tokenizer)
-
-
-def _load_whisper_processor(model_id: str) -> Any:
-    """Load a ``WhisperProcessor`` from ``model_id``.
-
-    Some community repos ship only ``processor_config.json`` (with a nested
-    ``feature_extractor``) and no ``preprocessor_config.json``. Others ship a
-    ``tokenizer_config.json`` where ``extra_special_tokens`` is a plain list,
-    which breaks ``WhisperTokenizerFast``. In those cases we assemble the processor
-    manually and prefer the slow tokenizer when needed.
-    """
-    try:
-        return AutoProcessor.from_pretrained(model_id)
-    except (OSError, AttributeError) as exc:
-        if not _whisper_processor_needs_manual_assembly(exc):
-            raise
-        return _assemble_whisper_processor_manual(model_id, cause=exc)
-
-
-def _build_pipeline(
+def _asr_pipeline(
     model: Any,
     processor: Any,
     device: str,
     torch_dtype: torch.dtype,
 ) -> Any:
-    """Wrap an already-loaded HF model + processor into an ASR pipeline."""
-    pipe = pipeline(
+    return pipeline(
         task="automatic-speech-recognition",
         model=model,
         tokenizer=processor.tokenizer,
@@ -284,7 +183,6 @@ def _build_pipeline(
         chunk_length_s=30,
         return_timestamps=False,
     )
-    return pipe
 
 
 def _load_peft(
@@ -304,22 +202,22 @@ def _load_peft(
         },
     )
 
-    processor = AutoProcessor.from_pretrained(base_id)
-    base_model = AutoModelForSpeechSeq2Seq.from_pretrained(
+    processor = WhisperProcessor.from_pretrained(base_id)
+    model = WhisperForConditionalGeneration.from_pretrained(
         base_id,
         torch_dtype=torch_dtype,
         low_cpu_mem_usage=True,
     )
-    model = PeftModel.from_pretrained(base_model, settings.model_id)
+    model = PeftModel.from_pretrained(model, settings.model_id)
 
     if settings.merge_peft_adapter:
-        log.info("asr_peft_merging", extra={"note": "merge_and_unload for inference"})
+        log.info("asr_peft_merging", extra={"note": "merge_and_unload"})
         model = model.merge_and_unload()
 
-    model.to(device=device, dtype=torch_dtype)
+    model = model.to(device=device, dtype=torch_dtype)
     model.eval()
 
-    return _build_pipeline(model, processor, device, torch_dtype)
+    return _asr_pipeline(model, processor, device, torch_dtype)
 
 
 def _load_merged(
@@ -327,26 +225,24 @@ def _load_merged(
     device: str,
     torch_dtype: torch.dtype,
 ) -> Any:
-    log.info(
-        "asr_merged_loading",
-        extra={"model_id": settings.model_id},
-    )
-    processor = _load_whisper_processor(settings.model_id)
+    log.info("asr_merged_loading", extra={"model_id": settings.model_id})
+
+    processor = AutoProcessor.from_pretrained(settings.model_id)
     model = AutoModelForSpeechSeq2Seq.from_pretrained(
         settings.model_id,
         torch_dtype=torch_dtype,
         low_cpu_mem_usage=True,
     )
-    model.to(device=device, dtype=torch_dtype)
+    model = model.to(device=device, dtype=torch_dtype)
     model.eval()
 
-    return _build_pipeline(model, processor, device, torch_dtype)
+    return _asr_pipeline(model, processor, device, torch_dtype)
 
 
 def _load_faster_whisper(settings: Settings) -> tuple[Any, str, str]:
     try:
         from faster_whisper import WhisperModel
-    except ImportError as exc:  # pragma: no cover
+    except ImportError as exc:
         raise RuntimeError(
             "model_kind='faster_whisper' requires the 'faster-whisper' package."
         ) from exc
@@ -372,10 +268,6 @@ def _load_faster_whisper(settings: Settings) -> tuple[Any, str, str]:
     )
     return model, device, compute_type
 
-
-# ---------------------------------------------------------------------------
-# Public entry point
-# ---------------------------------------------------------------------------
 
 def load_asr(settings: Settings | None = None) -> LoadedASR:
     """Load the configured ASR model and return it wrapped in ``LoadedASR``."""
@@ -403,7 +295,6 @@ def load_asr(settings: Settings | None = None) -> LoadedASR:
             sample_rate=settings.target_sample_rate,
         )
 
-    # transformers backend (peft or merged)
     device = _resolve_device(settings.device)
     torch_dtype = _resolve_dtype(device, settings)
 
@@ -421,7 +312,7 @@ def load_asr(settings: Settings | None = None) -> LoadedASR:
         pipe = _load_peft(settings, device, torch_dtype)
     elif settings.model_kind == "merged":
         pipe = _load_merged(settings, device, torch_dtype)
-    else:  # pragma: no cover - exhaustively covered by Literal
+    else:  # pragma: no cover
         raise ValueError(f"Unsupported model_kind: {settings.model_kind!r}")
 
     actual_dtype = _actual_dtype_str(pipe.model)
