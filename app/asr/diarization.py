@@ -30,6 +30,8 @@ from typing import Any
 import numpy as np
 import torch
 
+torch.backends.nnpack.set_flags(False)
+
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 

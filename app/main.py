@@ -13,6 +13,12 @@ Endpoints:
 
 from __future__ import annotations
 
+import os
+
+# Before any `import torch` (see `app.api.ws_transcribe` -> `diarization`). Stops
+# libtorch from probing NNPACK on unsupported hosts and spamming stderr.
+os.environ.setdefault("TORCH_BACKEND_NNPACK_ENABLED", "0")
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 
