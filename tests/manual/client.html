@@ -112,40 +112,6 @@
   #partial:empty::before {
     content: "Awaiting partial transcript…"; color: #4a5168;
   }
-  .awaiting-wrap {
-    margin-top: 10px;
-    display: none;
-    gap: 8px;
-    align-items: center;
-  }
-  .awaiting-wrap.visible {
-    display: flex;
-  }
-  .awaiting-label {
-    font-size: 12px;
-    color: var(--muted);
-    min-width: 92px;
-  }
-  .awaiting-bar {
-    flex: 1;
-    height: 8px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    background: #0f131c;
-    overflow: hidden;
-  }
-  .awaiting-bar > div {
-    width: 0%;
-    height: 100%;
-    transition: width 120ms linear;
-    background: linear-gradient(90deg, #5b8cff 0%, #8bb0ff 60%, #c4d6ff 100%);
-  }
-  .awaiting-pct {
-    font-size: 12px;
-    color: #c9d3e8;
-    min-width: 40px;
-    text-align: right;
-  }
 
   #finals {
     list-style: none; margin: 0; padding: 0;
@@ -229,11 +195,6 @@
   <section class="card">
     <h2>Live partial</h2>
     <div id="partial"></div>
-    <div class="awaiting-wrap" id="awaitingWrap">
-      <div class="awaiting-label">Transcribing</div>
-      <div class="awaiting-bar"><div id="awaitingBarFill"></div></div>
-      <div class="awaiting-pct" id="awaitingPct">0%</div>
-    </div>
   </section>
 
   <section class="card">
@@ -265,9 +226,6 @@
   const modelPill = $("modelPill");
   const devicePill = $("devicePill");
   const partialEl = $("partial");
-  const awaitingWrap = $("awaitingWrap");
-  const awaitingBarFill = $("awaitingBarFill");
-  const awaitingPct = $("awaitingPct");
   const finalsEl = $("finals");
   const logEl = $("log");
   const meterEl = $("meter");
@@ -291,8 +249,6 @@
   let seq = 0;
   let stableText = "";
   let lastPartial = "";
-  let progressTimer = null;
-  let progressPct = 0;
 
   // ---------- Helpers ----------
   function log(msg, kind="info") {
@@ -309,46 +265,7 @@
     endUttBtn.disabled = !streaming;
     stopBtn.disabled = !streaming;
   }
-  function setProgress(pct) {
-    const safe = Math.max(0, Math.min(100, Math.round(pct)));
-    progressPct = safe;
-    awaitingBarFill.style.width = safe + "%";
-    awaitingPct.textContent = safe + "%";
-  }
-  function showAwaiting(show) {
-    awaitingWrap.classList.toggle("visible", !!show);
-  }
-  function startProgressLoop() {
-    stopProgressLoop();
-    showAwaiting(true);
-    setProgress(0);
-    progressTimer = setInterval(() => {
-      if (progressPct < 95) {
-        setProgress(progressPct + 3);
-      } else {
-        // keep motion while waiting for a transcript event
-        setProgress(8);
-      }
-    }, 120);
-  }
-  function stopProgressLoop(markDone) {
-    if (progressTimer) {
-      clearInterval(progressTimer);
-      progressTimer = null;
-    }
-    if (markDone) {
-      setProgress(100);
-      setTimeout(() => {
-        showAwaiting(false);
-        setProgress(0);
-      }, 220);
-      return;
-    }
-    showAwaiting(false);
-    setProgress(0);
-  }
   btnState({streaming: false});
-  stopProgressLoop(false);
 
   // Probe /health/ready to populate pills.
   fetch("/health/ready").then(r => r.json()).then(j => {
@@ -533,7 +450,6 @@
     stopFlushLoop();
     stopMic();
     btnState({streaming: false});
-    stopProgressLoop(false);
   }
 
   function handleServerMessage(raw) {
@@ -544,11 +460,9 @@
         log(`ack: ${msg.message}`);
         break;
       case "partial_transcript":
-        stopProgressLoop(true);
         renderPartial(msg);
         break;
       case "final_transcript":
-        stopProgressLoop(true);
         renderFinal(msg);
         break;
       case "warning":
@@ -607,7 +521,6 @@
       seq = 0; stableText = ""; lastPartial = "";
       partialEl.textContent = "";
       btnState({streaming: true});
-      startProgressLoop();
       await openSocket();
       await startMic();
       startFlushLoop();
@@ -619,7 +532,6 @@
 
   endUttBtn.addEventListener("click", () => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    startProgressLoop();
     ws.send(JSON.stringify({ type: "end_utterance", seq: seq }));
     log("sent end_utterance");
   });
