@@ -199,7 +199,7 @@ class Settings(BaseSettings):
     )
     """Allowed MIME types for HTTP uploads (supports exact and wildcard patterns)."""
 
-    http_transcribe_timeout_seconds: int = 120
+    http_transcribe_timeout_seconds: int = 300
     """Timeout for synchronous HTTP transcription calls."""
 
     # --- Derived helpers -----------------------------------------------------

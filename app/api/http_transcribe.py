@@ -138,19 +138,23 @@ async def transcribe_uploaded_audio(
             engine.transcribe_audio_array(audio, language_hint=language_hint),
             timeout=settings.http_transcribe_timeout_seconds,
         )
-    except TimeoutError as exc:
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        message = (
+            "Transcription timed out. "
+            f"Request exceeded {settings.http_transcribe_timeout_seconds} seconds."
+        )
         log.warning(
             "http_transcribe_failed",
             extra={
                 **log_context,
                 "status": "error",
                 "error_type": "timeout",
-                "error_message": "Transcription timed out.",
+                "error_message": message,
             },
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Transcription timed out. Try a shorter audio clip.",
+            detail="Transcription timed out. Try a shorter audio clip or increase timeout.",
         ) from exc
     except Exception as exc:  # noqa: BLE001
         log.exception(
