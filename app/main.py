@@ -161,7 +161,7 @@ if _CLIENT_DIR.exists():
     )
 
 
-@app.get("/client", include_in_schema=False)
+@app.get("/client", include_in_schema=False, response_model=None)
 async def client_page() -> FileResponse | JSONResponse:
     if not _CLIENT_HTML.exists():
         return JSONResponse(
