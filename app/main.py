@@ -162,7 +162,7 @@ if _CLIENT_DIR.exists():
 
 
 @app.get("/client", include_in_schema=False)
-async def client_page() -> FileResponse:
+async def client_page() -> FileResponse | JSONResponse:
     if not _CLIENT_HTML.exists():
         return JSONResponse(
             content={"detail": "Test client not found. See tests/manual/client.html."},

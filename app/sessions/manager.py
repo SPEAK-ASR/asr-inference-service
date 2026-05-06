@@ -63,6 +63,7 @@ class SessionState:
 
     def new_utterance(self) -> str:
         self.utterance_id = f"u{uuid.uuid4().hex[:8]}"
+        self.last_speaker = None
         self.engine_buffer.reset_for_new_utterance()
         reset_segment(self.vad_segmenter)
         self.decoder = IncrementalDecoder(

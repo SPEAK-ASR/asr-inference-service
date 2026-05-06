@@ -403,8 +403,12 @@
       // copy because the buffer is reused
       inputBuffer.push(new Float32Array(input));
     };
+    // ScriptProcessor must connect to the graph; use zero gain so mic is not played to speakers.
+    const mute = audioCtx.createGain();
+    mute.gain.value = 0;
     sourceNode.connect(processorNode);
-    processorNode.connect(audioCtx.destination);
+    processorNode.connect(mute);
+    mute.connect(audioCtx.destination);
     log(`mic started, native sr=${nativeSr}Hz`);
   }
 
