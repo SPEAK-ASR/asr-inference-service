@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any, Callable
 
 import numpy as np
 import torch
@@ -15,6 +17,28 @@ log = get_logger(__name__)
 
 # Very short clips are unreliable for clustering; skip diarization and save GPU/CPU.
 _MIN_SECONDS = 0.45
+
+
+@contextmanager
+def _torch_load_pyannote_checkpoints() -> Iterator[None]:
+    """PyTorch 2.6+ defaults ``torch.load(..., weights_only=True)``.
+
+    Lightning / pyannote ``.pt`` / ``.ckpt`` files need legacy unpickling
+    (trusted Hugging Face artifacts). Only applies when callers omit
+    ``weights_only``.
+    """
+    orig: Callable[..., Any] = torch.load
+
+    def _load(*args: Any, **kwargs: Any) -> Any:
+        if "weights_only" not in kwargs:
+            kwargs["weights_only"] = False
+        return orig(*args, **kwargs)
+
+    torch.load = _load  # type: ignore[method-assign]
+    try:
+        yield
+    finally:
+        torch.load = orig  # type: ignore[method-assign]
 
 
 def _dominant_speaker_exclusive(annotation: Any, *, t0: float, t1: float) -> str | None:
@@ -51,15 +75,17 @@ class DiarizationService:
         from inspect import signature
 
         params = signature(Pipeline.from_pretrained).parameters
-        if "token" in params:
-            return Pipeline.from_pretrained(model_id, token=token)
-        if "use_auth_token" in params:
-            return Pipeline.from_pretrained(model_id, use_auth_token=token)
 
-        from huggingface_hub import login
+        with _torch_load_pyannote_checkpoints():
+            if "token" in params:
+                return Pipeline.from_pretrained(model_id, token=token)
+            if "use_auth_token" in params:
+                return Pipeline.from_pretrained(model_id, use_auth_token=token)
 
-        login(token=token)
-        return Pipeline.from_pretrained(model_id)
+            from huggingface_hub import login
+
+            login(token=token)
+            return Pipeline.from_pretrained(model_id)
 
     def _sync_label(self, pipeline: Any, audio_f32: np.ndarray, sample_rate: int) -> str | None:
         from pyannote.audio.pipelines.speaker_diarization import DiarizeOutput
