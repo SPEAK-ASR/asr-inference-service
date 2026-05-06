@@ -187,7 +187,7 @@ class Settings(BaseSettings):
         ),
     )
     diarization_model_id: str = Field(
-        default="pyannote/speaker-diarization-community-1",
+        default="pyannote/speaker-diarization-3.1",
         description="HF id of the pyannote speaker diarization pipeline.",
     )
     diarization_embedding_model_id: str = Field(
