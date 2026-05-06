@@ -16,6 +16,7 @@ are serialized in the streaming engine via an asyncio lock.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -188,6 +189,55 @@ def _detect_peft_base_model(adapter_id: str) -> str:
     return base
 
 
+def _load_whisper_processor(model_id: str) -> Any:
+    """Load a ``WhisperProcessor`` from ``model_id``.
+
+    Some community repos ship only ``processor_config.json`` (with a nested
+    ``feature_extractor`` object) and omit the standalone ``preprocessor_config.json``
+    that ``AutoProcessor`` / ``WhisperFeatureExtractor`` expect. In that case we
+    build the processor from ``processor_config.json`` + tokenizer files.
+    """
+    try:
+        return AutoProcessor.from_pretrained(model_id)
+    except OSError as exc:
+        err = str(exc).lower()
+        if "preprocessor_config.json" not in err:
+            raise
+
+    log.info(
+        "asr_whisper_processor_fallback",
+        extra={
+            "model_id": model_id,
+            "note": "repo lacks preprocessor_config.json; using nested feature_extractor",
+        },
+    )
+
+    from huggingface_hub import hf_hub_download
+    from transformers import AutoTokenizer, WhisperFeatureExtractor, WhisperProcessor
+
+    try:
+        proc_path = hf_hub_download(repo_id=model_id, filename="processor_config.json")
+    except Exception as hub_exc:  # noqa: BLE001
+        raise OSError(
+            f"Could not load processor for '{model_id}'. "
+            f"AutoProcessor failed (missing preprocessor_config.json) and "
+            f"processor_config.json could not be fetched. Original error: {exc}"
+        ) from hub_exc
+
+    with open(proc_path, encoding="utf-8") as f:
+        proc_cfg = json.load(f)
+    fe_cfg = proc_cfg.get("feature_extractor")
+    if not isinstance(fe_cfg, dict):
+        raise OSError(
+            f"'{model_id}': processor_config.json has no 'feature_extractor' object; "
+            f"cannot build WhisperFeatureExtractor."
+        ) from exc
+
+    feature_extractor = WhisperFeatureExtractor.from_dict(fe_cfg)
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    return WhisperProcessor(feature_extractor=feature_extractor, tokenizer=tokenizer)
+
+
 def _build_pipeline(
     model: Any,
     processor: Any,
@@ -252,7 +302,7 @@ def _load_merged(
         "asr_merged_loading",
         extra={"model_id": settings.model_id},
     )
-    processor = AutoProcessor.from_pretrained(settings.model_id)
+    processor = _load_whisper_processor(settings.model_id)
     model = AutoModelForSpeechSeq2Seq.from_pretrained(
         settings.model_id,
         torch_dtype=torch_dtype,
