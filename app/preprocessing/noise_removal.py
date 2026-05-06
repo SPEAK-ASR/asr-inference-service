@@ -114,8 +114,6 @@ def denoise(audio: np.ndarray, sample_rate: int) -> np.ndarray:
     model = _state["model"]
     df_state = _state["df_state"]
     df_sr = int(_state["df_sr"])
-    device = str(_state["device"])
-
     try:
         from df.enhance import enhance
     except ImportError as exc:  # pragma: no cover
@@ -126,7 +124,10 @@ def denoise(audio: np.ndarray, sample_rate: int) -> np.ndarray:
 
     with _lock:
         try:
-            up = _resample(tensor, sample_rate, df_sr).to(device)
+            up = _resample(tensor, sample_rate, df_sr)
+            # DeepFilterNet's feature path calls `.numpy()` on `audio`, so this
+            # tensor must stay on host even when the model itself is on GPU.
+            up = up.to("cpu")
             with torch.inference_mode():
                 cleaned = enhance(model, df_state, up)
             cleaned = cleaned.detach().to("cpu")
