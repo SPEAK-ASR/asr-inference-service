@@ -250,14 +250,19 @@ class TranscriptionClient {
     switch (map['type']) {
       case 'ack':
         onAck(map);
+        break;
       case 'partial_transcript':
         onPartial(map);
+        break;
       case 'final_transcript':
         onFinal(map);
+        break;
       case 'error':
         onErrorPayload(map);
+        break;
       case 'session_summary':
         onSessionSummary(map);
+        break;
       default:
         onUnknown(map);
     }
