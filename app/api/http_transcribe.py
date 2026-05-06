@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
 
@@ -37,18 +38,46 @@ def _content_type_allowed(content_type: str | None, allowed_patterns: list[str])
     return False
 
 
-def _validate_upload(file: UploadFile, payload_size: int, settings: Settings) -> None:
+def _build_upload_log_context(
+    file: UploadFile,
+    payload_size: int,
+    language_hint: str | None,
+) -> dict[str, str | int | None]:
+    return {
+        "upload_filename": file.filename,
+        "file_extension": Path(file.filename or "").suffix.lower() or None,
+        "content_type": file.content_type,
+        "payload_size_bytes": payload_size,
+        "language_hint": language_hint,
+    }
+
+
+def _validate_upload(file: UploadFile, payload_size: int, settings: Settings, log_context: dict[str, str | int | None]) -> None:
     if payload_size == 0:
+        log.warning(
+            "http_transcribe_upload_rejected",
+            extra={**log_context, "status": "error", "error_type": "empty_upload", "error_message": "Uploaded audio is empty."},
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded audio is empty.")
     if payload_size > settings.http_transcribe_max_upload_bytes:
+        message = f"Audio exceeds {settings.http_transcribe_max_upload_bytes} bytes."
+        log.warning(
+            "http_transcribe_upload_rejected",
+            extra={**log_context, "status": "error", "error_type": "payload_too_large", "error_message": message},
+        )
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Audio exceeds {settings.http_transcribe_max_upload_bytes} bytes.",
+            detail=message,
         )
     if not _content_type_allowed(file.content_type, settings.http_transcribe_allowed_mime_types):
+        message = f"Unsupported audio content type: {file.content_type!r}."
+        log.warning(
+            "http_transcribe_upload_rejected",
+            extra={**log_context, "status": "error", "error_type": "unsupported_content_type", "error_message": message},
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported audio content type: {file.content_type!r}.",
+            detail=message,
         )
 
 
@@ -62,21 +91,36 @@ async def transcribe_uploaded_audio(
     engine = request.app.state.engine
 
     payload = await audio_file.read()
-    _validate_upload(audio_file, len(payload), settings)
+    language_hint = language or settings.language_hint
+    log_context = _build_upload_log_context(audio_file, len(payload), language_hint)
+    _validate_upload(audio_file, len(payload), settings, log_context)
 
     try:
         audio = decode_uploaded_audio(payload, target_sample_rate=settings.target_sample_rate)
     except Exception as exc:  # noqa: BLE001
         log.warning(
             "http_transcribe_audio_decode_failed",
-            extra={"content_type": audio_file.content_type, "upload_filename": audio_file.filename, "error": str(exc)},
+            extra={
+                **log_context,
+                "status": "error",
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+            },
         )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or corrupt audio payload.") from exc
 
     if audio.size == 0:
+        log.warning(
+            "http_transcribe_audio_decode_failed",
+            extra={
+                **log_context,
+                "status": "error",
+                "error_type": "empty_decoded_audio",
+                "error_message": "No decodable audio samples found.",
+            },
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No decodable audio samples found.")
 
-    language_hint = language or settings.language_hint
     t0 = time.perf_counter()
     try:
         text, _decode_seconds = await asyncio.wait_for(
@@ -84,6 +128,15 @@ async def transcribe_uploaded_audio(
             timeout=settings.http_transcribe_timeout_seconds,
         )
     except TimeoutError as exc:
+        log.warning(
+            "http_transcribe_failed",
+            extra={
+                **log_context,
+                "status": "error",
+                "error_type": "timeout",
+                "error_message": "Transcription timed out.",
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Transcription timed out. Try a shorter audio clip.",
@@ -92,9 +145,10 @@ async def transcribe_uploaded_audio(
         log.exception(
             "http_transcribe_failed",
             extra={
-                "upload_filename": audio_file.filename,
-                "content_type": audio_file.content_type,
-                "payload_size": len(payload),
+                **log_context,
+                "status": "error",
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
             },
         )
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Transcription failed.") from exc
@@ -104,9 +158,8 @@ async def transcribe_uploaded_audio(
     log.info(
         "http_transcribe_success",
         extra={
-            "upload_filename": audio_file.filename,
-            "content_type": audio_file.content_type,
-            "payload_size": len(payload),
+            **log_context,
+            "status": "success",
             "duration_ms": duration_ms,
             "text_len": len(clean_text),
         },
