@@ -56,6 +56,17 @@
   .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
   .row + .row { margin-top: 10px; }
   label { font-size: 12px; color: var(--muted); }
+  .chk-row {
+    display: flex; flex-wrap: wrap; gap: 16px; align-items: center;
+    font-size: 13px; color: var(--text);
+  }
+  .chk-row label.chk {
+    display: inline-flex; align-items: center; gap: 8px;
+    cursor: pointer; color: var(--text); min-width: unset;
+  }
+  .chk-row input[type="checkbox"] {
+    width: 16px; height: 16px; min-width: 16px; accent-color: var(--accent);
+  }
   input, select {
     background: #0f131c; color: var(--text);
     border: 1px solid var(--border); border-radius: 8px;
@@ -88,6 +99,13 @@
     background: #0f131c; border: 1px dashed var(--border);
     color: #c9d3e8;
     white-space: pre-wrap;
+  }
+  #partial .speaker-tag {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-right: 8px;
+    font-family: ui-monospace, monospace;
   }
   #partial .stable { color: var(--text); }
   #partial .tail { color: var(--muted); }
@@ -138,8 +156,13 @@
     background: #0f131c; border: 1px solid var(--border);
     margin-bottom: 8px; font-size: 15px; line-height: 1.45;
   }
-  #finals li .meta {
-    font-size: 11px; color: var(--muted); margin-bottom: 4px;
+  #finals li .spk {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    font-family: ui-monospace, monospace;
+    margin-right: 8px;
   }
 
   #log {
@@ -187,6 +210,11 @@
       <label>Lang hint</label>
       <input id="langHint" value="si" style="min-width:60px" />
     </div>
+    <div class="chk-row row">
+      <label class="chk"><input type="checkbox" id="chkDiarization" /> Speaker diarization</label>
+      <label class="chk"><input type="checkbox" id="chkNoiseRemoval" /> Noise removal (not implemented)</label>
+      <button type="button" id="loadPostprocBtn" class="secondary" style="margin-left:auto">Load server defaults</button>
+    </div>
     <div class="row">
       <button id="startBtn">Start streaming</button>
       <button id="endUttBtn" class="secondary" disabled>End utterance</button>
@@ -226,6 +254,9 @@
   const wsUrlInput = $("wsUrl");
   const sessionIdInput = $("sessionId");
   const langInput = $("langHint");
+  const chkDiarization = $("chkDiarization");
+  const chkNoiseRemoval = $("chkNoiseRemoval");
+  const loadPostprocBtn = $("loadPostprocBtn");
   const startBtn = $("startBtn");
   const endUttBtn = $("endUttBtn");
   const stopBtn = $("stopBtn");
@@ -324,6 +355,25 @@
     if (j.model_id) modelPill.textContent = "model: " + j.model_id;
     if (j.device) devicePill.textContent = "device: " + j.device;
   }).catch(() => {});
+
+  async function fetchPostprocessingDefaults() {
+    try {
+      const r = await fetch("/api/postprocessing");
+      if (!r.ok) return;
+      const j = await r.json();
+      chkDiarization.checked = !!j.diarization_enabled;
+      chkNoiseRemoval.checked = !!j.noise_removal_enabled;
+      log(
+        `server postprocessing: diarization=${j.diarization_enabled} noise_removal=${j.noise_removal_enabled}` +
+        (j.hf_token_configured ? " hf_token=yes" : " hf_token=no"),
+      );
+    } catch {
+      log("could not GET /api/postprocessing (same origin as this page?)", "warn");
+    }
+  }
+  fetchPostprocessingDefaults();
+
+  loadPostprocBtn.addEventListener("click", () => fetchPostprocessingDefaults());
 
   // ---------- Audio capture ----------
   async function startMic() {
@@ -458,6 +508,10 @@
           encoding: "pcm_s16le",
           channels: 1,
           language_hint: langInput.value || "si",
+          postprocessing: {
+            diarization: chkDiarization.checked,
+            noise_removal: chkNoiseRemoval.checked,
+          },
         }));
         resolve();
       };
@@ -514,15 +568,23 @@
     if (msg.is_stable) stableText = lastPartial;
     const tail = lastPartial.startsWith(stableText)
       ? lastPartial.slice(stableText.length) : lastPartial;
+    const spkTag = msg.speaker
+      ? `<span class="speaker-tag">${escapeHtml(msg.speaker)}</span>`
+      : "";
     partialEl.innerHTML =
+      spkTag +
       `<span class="stable">${escapeHtml(stableText)}</span>` +
       `<span class="tail">${escapeHtml(tail)}</span>`;
   }
 
   function renderFinal(msg) {
     const li = document.createElement("li");
-    li.innerHTML = `<div class="meta">u=${msg.utterance_id} · ${msg.start_ms}-${msg.end_ms} ms</div>`
-                 + escapeHtml(msg.text || "");
+    const spkHtml = msg.speaker
+      ? `<span class="spk">${escapeHtml(msg.speaker)}</span>`
+      : "";
+    li.innerHTML =
+      `<div class="meta">${spkHtml}u=${escapeHtml(msg.utterance_id)} · ${msg.start_ms}-${msg.end_ms} ms</div>`
+      + escapeHtml(msg.text || "");
     finalsEl.prepend(li);
     partialEl.textContent = "";
     stableText = "";
