@@ -23,11 +23,13 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.settings import router as settings_router
 from app.api.ws_transcribe import router as ws_router
 from app.asr.model_loader import load_asr
 from app.asr.streaming_engine import StreamingEngine
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
+from app.core.runtime_settings import RuntimeSettings
 from app.sessions.manager import SessionManager
 
 configure_logging()
@@ -47,17 +49,33 @@ async def lifespan(app: FastAPI):
     )
 
     asr = load_asr(settings)
-    engine = StreamingEngine(asr=asr, settings=settings)
+
+    runtime_settings = RuntimeSettings(
+        use_noise_removal=settings.use_noise_removal,
+    )
+
+    engine = StreamingEngine(
+        asr=asr,
+        settings=settings,
+        runtime_settings=runtime_settings,
+    )
 
     from app.asr.vad import preload_vad
+    from app.preprocessing.noise_removal import preload_denoiser
 
     if settings.streaming_mode == "vad":
         preload_vad()
+
+    try:
+        preload_denoiser(settings)
+    except Exception:  # noqa: BLE001
+        log.exception("denoiser_preload_failed")
 
     sessions = SessionManager(settings=settings)
     await sessions.start()
 
     app.state.settings = settings
+    app.state.runtime_settings = runtime_settings
     app.state.asr = asr
     app.state.engine = engine
     app.state.sessions = sessions
@@ -128,6 +146,7 @@ async def health_ready() -> JSONResponse:
 
 
 app.include_router(ws_router)
+app.include_router(settings_router)
 
 
 # ---------------------------------------------------------------------------

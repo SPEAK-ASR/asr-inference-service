@@ -21,6 +21,7 @@ import numpy as np
 from app.asr.model_loader import LoadedASR
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
+from app.core.runtime_settings import RuntimeSettings
 
 log = get_logger(__name__)
 
@@ -65,10 +66,27 @@ class EngineBuffer:
 class StreamingEngine:
     """Wraps a `LoadedASR` (transformers or faster-whisper) and exposes async calls."""
 
-    def __init__(self, asr: LoadedASR, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        asr: LoadedASR,
+        settings: Settings | None = None,
+        runtime_settings: RuntimeSettings | None = None,
+    ) -> None:
         self.asr = asr
         self.settings = settings or get_settings()
+        self.runtime_settings = runtime_settings
         self._lock = asyncio.Lock()
+
+    def _maybe_denoise(self, audio: np.ndarray) -> np.ndarray:
+        """Apply DeepFilterNet if the runtime toggle is on; passthrough otherwise."""
+        rt = self.runtime_settings
+        if rt is None or not rt.use_noise_removal:
+            return audio
+        if audio is None or audio.size == 0:
+            return audio
+        from app.preprocessing.noise_removal import denoise
+
+        return denoise(audio, self.sample_rate)
 
     @property
     def sample_rate(self) -> int:
@@ -100,6 +118,7 @@ class StreamingEngine:
         window_samples = int(self.settings.decode_window_seconds * self.sample_rate)
         audio = buffer.samples[-window_samples:] if len(buffer.samples) > window_samples else buffer.samples
         audio_arr = np.ascontiguousarray(audio, dtype=np.float32)
+        audio_arr = self._maybe_denoise(audio_arr)
 
         generate_kwargs: dict[str, Any] = {"task": self.settings.task}
         if language_hint:
@@ -128,6 +147,7 @@ class StreamingEngine:
             return "", 0.0
 
         audio_arr = np.ascontiguousarray(buffer.samples, dtype=np.float32)
+        audio_arr = self._maybe_denoise(audio_arr)
         generate_kwargs: dict[str, Any] = {"task": self.settings.task}
         if language_hint:
             generate_kwargs["language"] = language_hint
@@ -155,6 +175,7 @@ class StreamingEngine:
             return "", 0.0
 
         audio_arr = np.ascontiguousarray(audio, dtype=np.float32)
+        audio_arr = self._maybe_denoise(audio_arr)
         generate_kwargs: dict[str, Any] = {"task": self.settings.task}
         if language_hint:
             generate_kwargs["language"] = language_hint

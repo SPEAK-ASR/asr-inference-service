@@ -182,6 +182,16 @@ class Settings(BaseSettings):
     max_chunk_bytes: int = 256 * 1024
     """Reject incoming audio_chunk bigger than this (post-base64-decode)."""
 
+    # --- Preprocessing toggles (seed for runtime-mutable RuntimeSettings) ---
+    use_noise_removal: bool = Field(
+        default=False,
+        description=(
+            "Initial state for runtime noise-removal toggle "
+            "(env: ASR_USE_NOISE_REMOVAL). The actual flag at runtime lives "
+            "in app.state.runtime_settings and is mutated via PUT /settings."
+        ),
+    )
+
     # --- Derived helpers -----------------------------------------------------
 
     @property
