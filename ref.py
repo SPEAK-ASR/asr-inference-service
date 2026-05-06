@@ -196,19 +196,6 @@ with gr.Blocks(title="Sinhala ASR — Real-time Whisper") as demo:
                 label="Task",
                 info="Transcribe → Sinhala text  |  Translate → English",
             )
-            with gr.Accordion("⚙️ Advanced Settings", open=False):
-                gr.Markdown(
-                    "**Silence trigger** — how long a pause before transcription fires.  \n"
-                    "**VAD sensitivity** — raise if background noise keeps triggering speech."
-                )
-                silence_slider = gr.Slider(
-                    minimum=0.5, maximum=3.0, value=SILENCE_TRIGGER_SEC,
-                    step=0.1, label="Silence trigger (seconds)",
-                )
-                vad_slider = gr.Slider(
-                    minimum=0.1, maximum=0.9, value=VAD_THRESHOLD,
-                    step=0.05, label="VAD sensitivity",
-                )
             clear_btn = gr.Button("🗑️ Clear", variant="secondary")
 
         with gr.Column():
