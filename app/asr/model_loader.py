@@ -189,39 +189,51 @@ def _detect_peft_base_model(adapter_id: str) -> str:
     return base
 
 
-def _load_whisper_processor(model_id: str) -> Any:
-    """Load a ``WhisperProcessor`` from ``model_id``.
+def _whisper_processor_needs_manual_assembly(exc: BaseException) -> bool:
+    """Detect Hub layouts / tokenizer JSON that break stock ``AutoProcessor``."""
+    if isinstance(exc, OSError):
+        return "preprocessor_config.json" in str(exc).lower()
+    if isinstance(exc, AttributeError):
+        # e.g. tokenizer_config has ``extra_special_tokens`` as a list; fast
+        # tokenizer calls ``.keys()`` on it (WhisperTokenizerFast).
+        m = str(exc).lower()
+        return "keys" in m and "list" in m
+    return False
 
-    Some community repos ship only ``processor_config.json`` (with a nested
-    ``feature_extractor`` object) and omit the standalone ``preprocessor_config.json``
-    that ``AutoProcessor`` / ``WhisperFeatureExtractor`` expect. In that case we
-    build the processor from ``processor_config.json`` + tokenizer files.
-    """
+
+def _load_whisper_tokenizer_slow_fallback(model_id: str) -> Any:
+    """Load tokenizer; fall back to slow tokenizer for odd ``tokenizer_config`` files."""
+    from transformers import AutoTokenizer
+
     try:
-        return AutoProcessor.from_pretrained(model_id)
-    except OSError as exc:
-        err = str(exc).lower()
-        if "preprocessor_config.json" not in err:
-            raise
+        return AutoTokenizer.from_pretrained(model_id, use_fast=True)
+    except AttributeError:
+        log.info(
+            "asr_whisper_tokenizer_slow",
+            extra={
+                "model_id": model_id,
+                "note": "WhisperTokenizerFast failed; using slow tokenizer",
+            },
+        )
+        return AutoTokenizer.from_pretrained(model_id, use_fast=False)
+
+
+def _assemble_whisper_processor_manual(model_id: str, *, cause: BaseException) -> Any:
+    """Build ``WhisperProcessor`` from ``processor_config.json`` + tokenizer files."""
+    from huggingface_hub import hf_hub_download
+    from transformers import WhisperFeatureExtractor, WhisperProcessor
 
     log.info(
-        "asr_whisper_processor_fallback",
-        extra={
-            "model_id": model_id,
-            "note": "repo lacks preprocessor_config.json; using nested feature_extractor",
-        },
+        "asr_whisper_processor_manual_assembly",
+        extra={"model_id": model_id, "trigger": type(cause).__name__},
     )
-
-    from huggingface_hub import hf_hub_download
-    from transformers import AutoTokenizer, WhisperFeatureExtractor, WhisperProcessor
 
     try:
         proc_path = hf_hub_download(repo_id=model_id, filename="processor_config.json")
     except Exception as hub_exc:  # noqa: BLE001
         raise OSError(
-            f"Could not load processor for '{model_id}'. "
-            f"AutoProcessor failed (missing preprocessor_config.json) and "
-            f"processor_config.json could not be fetched. Original error: {exc}"
+            f"Could not load processor for '{model_id}': processor_config.json not available. "
+            f"Original error: {cause}"
         ) from hub_exc
 
     with open(proc_path, encoding="utf-8") as f:
@@ -231,11 +243,28 @@ def _load_whisper_processor(model_id: str) -> Any:
         raise OSError(
             f"'{model_id}': processor_config.json has no 'feature_extractor' object; "
             f"cannot build WhisperFeatureExtractor."
-        ) from exc
+        ) from cause
 
     feature_extractor = WhisperFeatureExtractor.from_dict(fe_cfg)
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    tokenizer = _load_whisper_tokenizer_slow_fallback(model_id)
     return WhisperProcessor(feature_extractor=feature_extractor, tokenizer=tokenizer)
+
+
+def _load_whisper_processor(model_id: str) -> Any:
+    """Load a ``WhisperProcessor`` from ``model_id``.
+
+    Some community repos ship only ``processor_config.json`` (with a nested
+    ``feature_extractor``) and no ``preprocessor_config.json``. Others ship a
+    ``tokenizer_config.json`` where ``extra_special_tokens`` is a plain list,
+    which breaks ``WhisperTokenizerFast``. In those cases we assemble the processor
+    manually and prefer the slow tokenizer when needed.
+    """
+    try:
+        return AutoProcessor.from_pretrained(model_id)
+    except (OSError, AttributeError) as exc:
+        if not _whisper_processor_needs_manual_assembly(exc):
+            raise
+        return _assemble_whisper_processor_manual(model_id, cause=exc)
 
 
 def _build_pipeline(
