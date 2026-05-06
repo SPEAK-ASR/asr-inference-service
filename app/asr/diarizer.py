@@ -39,7 +39,7 @@ class SpeakerSpan:
 
 
 class Diarizer:
-    """Wraps the pyannote speaker-diarization-3.1 pipeline.
+    """Wraps the pyannote ``speaker-diarization-community-1`` pipeline (pyannote.audio 4.x).
 
     Inference is always blocking (``diarize_sync``).  The caller is
     responsible for off-loading to an executor so the event loop is not
@@ -55,8 +55,8 @@ class Diarizer:
         t0 = time.perf_counter()
 
         pipeline = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization-3.1",
-            use_auth_token=hf_token,
+            "pyannote/speaker-diarization-community-1",
+            token=hf_token,
         )
         pipeline.to(torch.device(device))
 
@@ -85,13 +85,13 @@ class Diarizer:
         waveform = torch.from_numpy(audio).unsqueeze(0).float()  # (1, samples)
         input_dict = {"waveform": waveform, "sample_rate": sample_rate}
 
-        diarization = self._pipeline(input_dict)
+        output = self._pipeline(input_dict)
 
         spans: list[SpeakerSpan] = []
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
+        for turn, speaker in output.speaker_diarization:
             spans.append(
                 SpeakerSpan(
-                    speaker=speaker,
+                    speaker=str(speaker),
                     start_sec=turn.start,
                     end_sec=turn.end,
                 )
@@ -109,7 +109,7 @@ def load_diarizer(settings: Settings) -> Diarizer:
         raise RuntimeError(
             "ASR_DIARIZATION_HF_TOKEN is not set. "
             "A HuggingFace token is required to download the gated "
-            "pyannote/speaker-diarization-3.1 model. "
+            "pyannote/speaker-diarization-community-1 pipeline. "
             "Set it in your .env file or as an environment variable."
         )
 

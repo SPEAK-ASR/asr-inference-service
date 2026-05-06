@@ -8,9 +8,11 @@ pydantic-settings>=2.3,<3
 python-dotenv>=1.0,<2
 
 # --- ML stack (CPU/GPU compatible; CUDA wheel chosen by env if available) ---
-# NOTE: For CUDA, install torch from the appropriate index URL:
-#   pip install --index-url https://download.pytorch.org/whl/cu121 torch
-torch>=2.2
+# NOTE: For CUDA, install torch + torchaudio from the same PyTorch index URL, e.g.:
+#   pip install --index-url https://download.pytorch.org/whl/cu121 "torch>=2.8,<3" "torchaudio>=2.8,<3"
+# Diarization (pyannote.audio 4.x) also needs ffmpeg on PATH for torchcodec decoding.
+torch>=2.8,<3
+torchaudio>=2.8,<3
 transformers>=4.44,<5
 accelerate>=0.33
 peft>=0.13
@@ -21,7 +23,8 @@ numpy>=1.26,<3
 silero-vad>=6,<7
 
 # --- Speaker diarization (optional; toggle via POST /admin/diarization) ---
-pyannote.audio>=3.1,<4
+# 4.x + pyannote/speaker-diarization-community-1 (HF "Latest"); 3.1 is legacy on HF.
+pyannote.audio>=4.0,<5
 
 # --- Audio I/O ---
 soundfile>=0.12

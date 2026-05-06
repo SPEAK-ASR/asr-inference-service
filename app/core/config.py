@@ -127,7 +127,7 @@ class Settings(BaseSettings):
     diarization_hf_token: str | None = Field(
         default=None,
         description=(
-            "HuggingFace token for the gated pyannote/speaker-diarization-3.1 model. "
+            "HuggingFace token for the gated pyannote/speaker-diarization-community-1 pipeline. "
             "Required when diarization is toggled on via POST /admin/diarization."
         ),
     )
