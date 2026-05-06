@@ -165,6 +165,35 @@
     background: linear-gradient(90deg, #3ddc84 0%, #ffb547 70%, #ff5d6c 100%);
     transition: width 60ms linear;
   }
+
+  .diarize-controls {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 10px;
+    background: #0f131c; border: 1px solid var(--border);
+  }
+  .diarize-controls .hint {
+    font-size: 11px; color: var(--muted); flex: 1 1 100%;
+  }
+  button.diarize-on { background: #2d6a4f; }
+  button.diarize-on:hover:not(:disabled) { background: #40916c; }
+
+  #finals li .spk {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 2px 8px; border-radius: 6px;
+    font-size: 11px; font-weight: 600;
+    background: rgba(91, 140, 255, 0.2); color: #9cb7ff;
+  }
+  #finals li .final-text {
+    font-size: 15px; line-height: 1.45;
+    white-space: pre-wrap;
+  }
+  #finals li ul.spk-seg {
+    margin: 8px 0 0; padding: 0 0 0 18px;
+    font-size: 12px; color: var(--muted);
+    line-height: 1.5;
+  }
+  #finals li ul.spk-seg strong { color: #9cb7ff; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -195,6 +224,11 @@
         <span>mic</span>
         <div class="meter"><div id="meter"></div></div>
       </span>
+    </div>
+    <div class="diarize-controls" style="margin-top: 12px">
+      <span class="pill" id="diarizePill">diarization: …</span>
+      <button type="button" id="diarizeToggleBtn" class="secondary">Enable diarization</button>
+      <span class="hint">Takes effect for new streams after you click Start (reconnect if already streaming).</span>
     </div>
   </section>
 
@@ -240,6 +274,8 @@
   const finalsEl = $("finals");
   const logEl = $("log");
   const meterEl = $("meter");
+  const diarizePill = $("diarizePill");
+  const diarizeToggleBtn = $("diarizeToggleBtn");
 
   const TARGET_SR = 16000;
   const CHUNK_MS = 320;
@@ -324,6 +360,52 @@
     if (j.model_id) modelPill.textContent = "model: " + j.model_id;
     if (j.device) devicePill.textContent = "device: " + j.device;
   }).catch(() => {});
+
+  function applyDiarizationUI(enabled, modelLoaded) {
+    const on = !!enabled;
+    diarizePill.textContent = on
+      ? ("diarization: on" + (modelLoaded ? " · model ready" : ""))
+      : ("diarization: off" + (modelLoaded ? " · model in memory" : ""));
+    diarizeToggleBtn.textContent = on ? "Disable diarization" : "Enable diarization";
+    diarizeToggleBtn.classList.toggle("diarize-on", on);
+  }
+
+  async function refreshDiarizationStatus() {
+    try {
+      const r = await fetch("/admin/diarization");
+      if (!r.ok) throw new Error("status " + r.status);
+      const j = await r.json();
+      applyDiarizationUI(j.enabled, j.model_loaded);
+    } catch (e) {
+      diarizePill.textContent = "diarization: ?";
+      log("could not load diarization status: " + (e && e.message || e), "warn");
+    }
+  }
+
+  async function toggleDiarization() {
+    try {
+      const cur = await fetch("/admin/diarization").then(r => r.json());
+      const want = !cur.enabled;
+      const r = await fetch("/admin/diarization", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: want }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const d = j.detail || j.message || JSON.stringify(j);
+        log("diarization toggle failed: " + d, "err");
+        return;
+      }
+      applyDiarizationUI(j.enabled, j.model_loaded);
+      log(`diarization ${j.enabled ? "enabled" : "disabled"} (model_loaded=${j.model_loaded})`);
+    } catch (e) {
+      log("diarization request failed: " + (e && e.message || e), "err");
+    }
+  }
+
+  diarizeToggleBtn.addEventListener("click", () => { toggleDiarization(); });
+  refreshDiarizationStatus();
 
   // ---------- Audio capture ----------
   async function startMic() {
@@ -521,8 +603,24 @@
 
   function renderFinal(msg) {
     const li = document.createElement("li");
-    li.innerHTML = `<div class="meta">u=${msg.utterance_id} · ${msg.start_ms}-${msg.end_ms} ms</div>`
-                 + escapeHtml(msg.text || "");
+    const metaParts = [
+      "u=" + escapeHtml(String(msg.utterance_id)),
+      msg.start_ms + "-" + msg.end_ms + " ms",
+    ];
+    if (msg.speaker) {
+      metaParts.push('<span class="spk">' + escapeHtml(msg.speaker) + "</span>");
+    }
+    let html = '<div class="meta">' + metaParts.join(" · ") + "</div>";
+    html += '<div class="final-text">' + escapeHtml(msg.text || "") + "</div>";
+    if (msg.speaker_segments && msg.speaker_segments.length) {
+      html += "<ul class=\"spk-seg\">";
+      for (const s of msg.speaker_segments) {
+        html += "<li><strong>" + escapeHtml(s.speaker) + "</strong> "
+          + s.start_ms + "–" + s.end_ms + " ms</li>";
+      }
+      html += "</ul>";
+    }
+    li.innerHTML = html;
     finalsEl.prepend(li);
     partialEl.textContent = "";
     stableText = "";
